@@ -19,6 +19,9 @@ constexpr size_t CYCLIC_VELOCITY_MODE = 9;
 constexpr size_t CYCLIC_POSITION_MODE = 8;
 constexpr double RPM_TO_RAD_PER_S = 0.10472;
 constexpr double RAD_PER_S_TO_RPM = 1 / RPM_TO_RAD_PER_S;
+unsigned int NORMAL_OPERATION_BRAKES_OFF = 0b00001111;
+// Bit 2 (0-indexed) goes to 0 to turn on Quick Stop
+unsigned int NORMAL_OPERATION_BRAKES_ON = 0b00001011;
 } // namespace
 
 hardware_interface::CallbackReturn SynapticonSystemInterface::on_init(
@@ -497,7 +500,7 @@ void SynapticonSystemInterface::somanetCyclicLoop(
           // Enable operation: Switched on -> Operation enabled
           else if ((in_somanet_1_[joint_idx]->Statusword &
                     0b0000000001101111) == 0b0000000000100011)
-            out_somanet_1_[joint_idx]->Controlword = 0b00001111;
+            out_somanet_1_[joint_idx]->Controlword = NORMAL_OPERATION_BRAKES_OFF;
 
           // Normal operation
           else if ((in_somanet_1_[joint_idx]->Statusword &
@@ -509,6 +512,7 @@ void SynapticonSystemInterface::somanetCyclicLoop(
                     threadsafe_commands_efforts_[joint_idx];
                 out_somanet_1_[joint_idx]->OpMode = PROFILE_TORQUE_MODE;
                 out_somanet_1_[joint_idx]->TorqueOffset = 0;
+                out_somanet_1_[joint_idx]->Controlword = NORMAL_OPERATION_BRAKES_OFF;
               }
             } else if (control_level_[joint_idx] == control_level_t::VELOCITY) {
               if (!std::isnan(threadsafe_commands_velocities_[joint_idx])) {
@@ -516,21 +520,23 @@ void SynapticonSystemInterface::somanetCyclicLoop(
                     threadsafe_commands_velocities_[joint_idx];
                 out_somanet_1_[joint_idx]->OpMode = CYCLIC_VELOCITY_MODE;
                 out_somanet_1_[joint_idx]->VelocityOffset = 0;
+                out_somanet_1_[joint_idx]->Controlword = NORMAL_OPERATION_BRAKES_OFF;
               }
             } else if (control_level_[joint_idx] == control_level_t::POSITION) {
               if (!std::isnan(threadsafe_commands_positions_[joint_idx])) {
                 out_somanet_1_[joint_idx]->TargetPosition = threadsafe_commands_positions_[joint_idx];
                 out_somanet_1_[joint_idx]->OpMode = CYCLIC_POSITION_MODE;
                 out_somanet_1_[joint_idx]->VelocityOffset = 0;
+                out_somanet_1_[joint_idx]->Controlword = NORMAL_OPERATION_BRAKES_OFF;
               }
             } else if (control_level_[joint_idx] == control_level_t::QUICK_STOP) {
               out_somanet_1_[joint_idx]->OpMode = PROFILE_TORQUE_MODE;
               out_somanet_1_[joint_idx]->TorqueOffset = 0;
-              // Bit 2 (0-indexed) goes to 0 to turn on Quick Stop
-              out_somanet_1_[joint_idx]->Controlword = 0b00001011;
+              out_somanet_1_[joint_idx]->Controlword = NORMAL_OPERATION_BRAKES_ON;
             } else if (control_level_[joint_idx] == control_level_t::UNDEFINED) {
               out_somanet_1_[joint_idx]->OpMode = PROFILE_TORQUE_MODE;
               out_somanet_1_[joint_idx]->TorqueOffset = 0;
+              out_somanet_1_[joint_idx]->Controlword = NORMAL_OPERATION_BRAKES_OFF;
             }
           }
         }
