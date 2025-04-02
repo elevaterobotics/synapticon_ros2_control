@@ -524,8 +524,8 @@ void SynapticonSystemInterface::somanetCyclicLoop(
             out_somanet_1_[joint_idx]->TorqueOffset = 0;
             out_somanet_1_[joint_idx]->TargetTorque = 0;
             // For quick testing, set the digital output to high
-            out_somanet_1_[joint_idx]->BitMask = 0x10000;
-            out_somanet_1_[joint_idx]->PhysicalOutputs = 0x10000;
+            out_somanet_1_[joint_idx]->BitMask |= 0x10000;
+            out_somanet_1_[joint_idx]->PhysicalOutputs |= 0x10000;
             first_iteration.at(joint_idx) = false;
           }
 
