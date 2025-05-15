@@ -139,6 +139,8 @@ private:
   std::vector<double> hw_commands_efforts_;
   // hw_commands_quick_stop_ is never actually used, just a placeholder for compilation
   std::vector<double> hw_commands_quick_stop_;
+  // hw_commands_envelope_violation_ is never actually used, just a placeholder for compilation
+  std::vector<double> hw_commands_envelope_violation_;
   std::vector<double> hw_states_positions_;
   std::vector<double> hw_states_velocities_;
   std::vector<double> hw_states_accelerations_;
@@ -155,6 +157,7 @@ private:
     VELOCITY = 2,
     POSITION = 3,
     QUICK_STOP = 4,
+    ENVELOPE_VIOLATION = 5,
   };
 
   // Active control mode for each actuator

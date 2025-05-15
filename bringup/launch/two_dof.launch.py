@@ -94,6 +94,7 @@ def generate_launch_description():
             "forward_velocity_controller",
             "forward_position_controller",
             "quick_stop_controller",
+            "envelope_violation_controller",
             "--param-file",
             robot_controllers,
         ],

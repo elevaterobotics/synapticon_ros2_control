@@ -68,6 +68,8 @@ hardware_interface::CallbackReturn SynapticonSystemInterface::on_init(
                               std::numeric_limits<double>::quiet_NaN());
   hw_commands_quick_stop_.resize(num_joints_,
                               std::numeric_limits<double>::quiet_NaN());
+  hw_commands_envelope_violation_.resize(num_joints_,
+                              std::numeric_limits<double>::quiet_NaN());
   control_level_.resize(num_joints_, control_level_t::UNDEFINED);
   // Atomic deques are difficult to initialize
   threadsafe_commands_efforts_.resize(num_joints_);
@@ -89,17 +91,20 @@ hardware_interface::CallbackReturn SynapticonSystemInterface::on_init(
           joint.command_interfaces[0].name ==
               hardware_interface::HW_IF_VELOCITY ||
           joint.command_interfaces[0].name ==
+              hardware_interface::HW_IF_EFFORT ||
+          joint.command_interfaces[0].name ==
               "quick_stop" ||
           joint.command_interfaces[0].name ==
-              hardware_interface::HW_IF_EFFORT)) {
+              "envelope_violation")) {
       RCLCPP_FATAL(
           get_logger(),
-          "Joint '%s' has %s command interface. Expected %s, %s, %s, or %s.",
+          "Joint '%s' has %s command interface. Expected %s, %s, %s, %s, or %s.",
           joint.name.c_str(), joint.command_interfaces[0].name.c_str(),
           hardware_interface::HW_IF_POSITION,
           hardware_interface::HW_IF_VELOCITY,
+          hardware_interface::HW_IF_EFFORT,
           "quick_stop",
-          hardware_interface::HW_IF_EFFORT);
+          "envelope_violation");
       return hardware_interface::CallbackReturn::ERROR;
     }
 
@@ -248,6 +253,8 @@ SynapticonSystemInterface::prepare_command_mode_switch(
         new_modes.push_back(control_level_t::POSITION);
       } else if (key == info_.joints[i].name + "/quick_stop") {
         new_modes.push_back(control_level_t::QUICK_STOP);
+      } else if (key == info_.joints[i].name + "/envelope_violation") {
+        new_modes.push_back(control_level_t::ENVELOPE_VIOLATION);
       }
     }
   }
@@ -425,6 +432,9 @@ SynapticonSystemInterface::export_command_interfaces() {
     command_interfaces.emplace_back(hardware_interface::CommandInterface(
         info_.joints[i].name, "quick_stop",
         &hw_commands_quick_stop_[i]));
+    command_interfaces.emplace_back(hardware_interface::CommandInterface(
+        info_.joints[i].name, "envelope_violation",
+        &hw_commands_envelope_violation_[i]));
   }
   return command_interfaces;
 }
@@ -559,6 +569,60 @@ void SynapticonSystemInterface::somanetCyclicLoop(
             in_normal_op_mode = true;
             if (control_level_[joint_idx] == control_level_t::EFFORT) {
               if (!std::isnan(threadsafe_commands_efforts_[joint_idx])) {
+                out_somanet_1_[joint_idx]->TargetTorque =
+                    threadsafe_commands_efforts_[joint_idx];
+                out_somanet_1_[joint_idx]->OpMode = PROFILE_TORQUE_MODE;
+                out_somanet_1_[joint_idx]->TorqueOffset = 0;
+                out_somanet_1_[joint_idx]->Controlword = NORMAL_OPERATION_BRAKES_OFF;
+              }
+            // Envelope violation is almost the same as normal operation except motion in one direction is resisted
+            } else if (control_level_[joint_idx] == control_level_t::ENVELOPE_VIOLATION) {
+
+              // yaw1 and yaw2
+              if (joint_idx == 0 || joint_idx == 1)
+              {
+                if (in_somanet_1_[joint_idx]->PositionValue > 0)
+                {
+                  // Resist motion
+                  if (in_somanet_1_[joint_idx]->VelocityValue < 0)
+                  {
+                    out_somanet_1_[joint_idx]->TargetVelocity = 0;
+                    out_somanet_1_[joint_idx]->OpMode = CYCLIC_VELOCITY_MODE;
+                    out_somanet_1_[joint_idx]->VelocityOffset = 0;
+                    out_somanet_1_[joint_idx]->Controlword = NORMAL_OPERATION_BRAKES_OFF;
+                  }
+                  // Free to guide, target torque is 0
+                  else
+                  {
+                    out_somanet_1_[joint_idx]->TargetTorque = 0;
+                    out_somanet_1_[joint_idx]->OpMode = PROFILE_TORQUE_MODE;
+                    out_somanet_1_[joint_idx]->TorqueOffset = 0;
+                    out_somanet_1_[joint_idx]->Controlword = NORMAL_OPERATION_BRAKES_OFF;
+                  }
+                }
+                else
+                {
+                  // Resist motion
+                  if (in_somanet_1_[joint_idx]->VelocityValue > 0)
+                  {
+                    out_somanet_1_[joint_idx]->TargetVelocity = 0;
+                    out_somanet_1_[joint_idx]->OpMode = CYCLIC_VELOCITY_MODE;
+                    out_somanet_1_[joint_idx]->VelocityOffset = 0;
+                    out_somanet_1_[joint_idx]->Controlword = NORMAL_OPERATION_BRAKES_OFF;
+                  }
+                  // Free to guide, target torque is 0
+                  else
+                  {
+                    out_somanet_1_[joint_idx]->TargetTorque = 0;
+                    out_somanet_1_[joint_idx]->OpMode = PROFILE_TORQUE_MODE;
+                    out_somanet_1_[joint_idx]->TorqueOffset = 0;
+                    out_somanet_1_[joint_idx]->Controlword = NORMAL_OPERATION_BRAKES_OFF;
+                  }
+                }
+              }
+              // other joints can be guided freely
+              else
+              {
                 out_somanet_1_[joint_idx]->TargetTorque =
                     threadsafe_commands_efforts_[joint_idx];
                 out_somanet_1_[joint_idx]->OpMode = PROFILE_TORQUE_MODE;
