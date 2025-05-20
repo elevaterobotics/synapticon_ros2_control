@@ -40,8 +40,8 @@ unsigned int NORMAL_OPERATION_BRAKES_ON = 0b00001011;
 constexpr char EXPECTED_SLAVE_NAME[] = "SOMANET";
 constexpr double TORQUE_FRICTION_OFFSET = 20; // per mill
 constexpr size_t SPRING_ADJUST_JOINT_IDX = 2;
-constexpr size_t MAX_SPRING_POTENTIOMETER_TICKS = 64000;
-constexpr size_t MIN_SPRING_POTENTIOMETER_TICKS = 1232;
+constexpr size_t MAX_SPRING_POTENTIOMETER_TICKS = 63900;
+constexpr size_t MIN_SPRING_POTENTIOMETER_TICKS = 1332;
 } // namespace
 
 hardware_interface::CallbackReturn SynapticonSystemInterface::on_init(
