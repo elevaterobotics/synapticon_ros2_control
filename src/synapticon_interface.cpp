@@ -635,6 +635,7 @@ void SynapticonSystemInterface::somanetCyclicLoop(
               out_somanet_1_[joint_idx]->Controlword = NORMAL_OPERATION_BRAKES_ON;
             }  else if (control_level_[joint_idx] == control_level_t::SPRING_ADJUST)
             {
+              std::cerr << in_somanet_1_[joint_idx]->AnalogInput2 << std::endl;
               // Spring adjust joint: proportional control based on analog input 2 potentiometer
               if (joint_idx == SPRING_ADJUST_JOINT_IDX) {
                 // Ensure a valid command
@@ -652,17 +653,17 @@ void SynapticonSystemInterface::somanetCyclicLoop(
                 double K_P = 1/64;
                 double error = in_somanet_1_[joint_idx]->AnalogInput2 - threadsafe_commands_spring_adjust_[joint_idx];
                 double target_torque = -K_P * error;
-                // A ceiling at 100% of rated torque
-                // With a floor of 10% torque (below that, the motor doesn't move)
+                // A ceiling at X% of rated torque
+                // With a floor of Y% torque (below that, the motor doesn't move)
                 if (target_torque > 0)
                 {
-                  target_torque = std::clamp(target_torque, 500.0, 1000.0);
-                  // target_torque = 1000;
+                  // target_torque = std::clamp(target_torque, 500.0, 1000.0);
+                  target_torque = 3000;
                 }
                 else
                 {
-                  target_torque = std::clamp(target_torque, -1000.0, -500.0);
-                  // target_torque = -1000;
+                  // target_torque = std::clamp(target_torque, -1000.0, -500.0);
+                  target_torque = -3000;
                 }
                 // Don't allow control mode to change until the target position is reached
                 if (std::abs(error) < 10) {
@@ -672,7 +673,6 @@ void SynapticonSystemInterface::somanetCyclicLoop(
                 else {
                   allow_mode_change_ = false;
                 }
-                std::cerr << in_somanet_1_[joint_idx]->AnalogInput2 << std::endl;
                 out_somanet_1_[joint_idx]->TargetTorque = target_torque;
                 out_somanet_1_[joint_idx]->OpMode = PROFILE_TORQUE_MODE;
                 out_somanet_1_[joint_idx]->TorqueOffset = 0;
