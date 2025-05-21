@@ -140,8 +140,8 @@ private:
   // hw_commands_quick_stop_ is never actually used, just a placeholder for compilation
   std::vector<double> hw_commands_quick_stop_;
   // hw_commands_spring_adjust_ is currently potentiometer ticks.
-  // 64000 ticks corresponds to max spring force.
-  // 1232 ticks corresponds to the opposite end of travel.
+  // ~64000 ticks corresponds to max spring force.
+  // ~1232 ticks corresponds to the opposite end of travel.
   std::vector<double> hw_commands_spring_adjust_;
   std::vector<double> hw_states_positions_;
   std::vector<double> hw_states_velocities_;

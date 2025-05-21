@@ -39,6 +39,7 @@ unsigned int NORMAL_OPERATION_BRAKES_OFF = 0b00001111;
 unsigned int NORMAL_OPERATION_BRAKES_ON = 0b00001011;
 constexpr char EXPECTED_SLAVE_NAME[] = "SOMANET";
 constexpr double TORQUE_FRICTION_OFFSET = 20; // per mill
+// TODO: this needs to be adjusted when more Synapticons are included in the chain
 constexpr size_t SPRING_ADJUST_JOINT_IDX = 0;
 constexpr double MAX_SPRING_POTENTIOMETER_TICKS = 63900;
 constexpr double MIN_SPRING_POTENTIOMETER_TICKS = 1332;
