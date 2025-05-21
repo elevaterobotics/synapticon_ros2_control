@@ -39,9 +39,9 @@ unsigned int NORMAL_OPERATION_BRAKES_OFF = 0b00001111;
 unsigned int NORMAL_OPERATION_BRAKES_ON = 0b00001011;
 constexpr char EXPECTED_SLAVE_NAME[] = "SOMANET";
 constexpr double TORQUE_FRICTION_OFFSET = 20; // per mill
-constexpr size_t SPRING_ADJUST_JOINT_IDX = 2;
-constexpr size_t MAX_SPRING_POTENTIOMETER_TICKS = 63900;
-constexpr size_t MIN_SPRING_POTENTIOMETER_TICKS = 1332;
+constexpr size_t SPRING_ADJUST_JOINT_IDX = 0;
+constexpr double MAX_SPRING_POTENTIOMETER_TICKS = 63900;
+constexpr double MIN_SPRING_POTENTIOMETER_TICKS = 1332;
 } // namespace
 
 hardware_interface::CallbackReturn SynapticonSystemInterface::on_init(
@@ -639,6 +639,10 @@ void SynapticonSystemInterface::somanetCyclicLoop(
               if (joint_idx == SPRING_ADJUST_JOINT_IDX) {
                 // Ensure a valid command
                 if (std::isnan(threadsafe_commands_spring_adjust_[joint_idx])) {
+                  out_somanet_1_[joint_idx]->TargetTorque = 0;
+                  out_somanet_1_[joint_idx]->OpMode = PROFILE_TORQUE_MODE;
+                  out_somanet_1_[joint_idx]->TorqueOffset = 0;
+                  out_somanet_1_[joint_idx]->Controlword = NORMAL_OPERATION_BRAKES_OFF;
                   continue;
                 }
 
@@ -665,6 +669,7 @@ void SynapticonSystemInterface::somanetCyclicLoop(
                 {
                   target_torque = std::clamp(target_torque, -1000.0, -200.0);
                 }
+                std::cerr << target_torque << std::endl;
                 out_somanet_1_[joint_idx]->TargetTorque = target_torque;
                 out_somanet_1_[joint_idx]->OpMode = PROFILE_TORQUE_MODE;
                 out_somanet_1_[joint_idx]->TorqueOffset = 0;
