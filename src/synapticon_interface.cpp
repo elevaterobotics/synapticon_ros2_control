@@ -657,13 +657,13 @@ void SynapticonSystemInterface::somanetCyclicLoop(
                 // With a floor of Y% torque (below that, the motor doesn't move)
                 if (target_torque > 0)
                 {
-                  // target_torque = std::clamp(target_torque, 500.0, 1000.0);
-                  target_torque = 3000;
+                  // target_torque = std::clamp(target_torque, 800.0, 1000.0);
+                  target_torque = 2000;
                 }
                 else
                 {
-                  // target_torque = std::clamp(target_torque, -1000.0, -500.0);
-                  target_torque = -3000;
+                  // target_torque = std::clamp(target_torque, -1000.0, -800.0);
+                  target_torque = -2000;
                 }
                 // Don't allow control mode to change until the target position is reached
                 if (std::abs(error) < 10) {
@@ -673,6 +673,7 @@ void SynapticonSystemInterface::somanetCyclicLoop(
                 else {
                   allow_mode_change_ = false;
                 }
+                std::cerr << "target_torque: " << target_torque << std::endl;
                 out_somanet_1_[joint_idx]->TargetTorque = target_torque;
                 out_somanet_1_[joint_idx]->OpMode = PROFILE_TORQUE_MODE;
                 out_somanet_1_[joint_idx]->TorqueOffset = 0;
@@ -706,7 +707,7 @@ void SynapticonSystemInterface::somanetCyclicLoop(
         // in_somanet_1_[0]->PositionDemandInternalValue); printf(" ActualVel:
         // %" PRId32 " ,", in_somanet_1_[0]->VelocityValue);
         // printf(" DemandVel: %" PRId32 " ,", in_somanet_1_[0]->VelocityDemandValue);
-        //printf("ActualTorque: %" PRId32 " ,", in_somanet_1_[0]->TorqueValue);
+        // printf("ActualTorque: %" PRId32 " ,", in_somanet_1_[0]->TorqueValue);
         // printf(" DemandTorque: %" PRId32 " ,", in_somanet_1_[0]->TorqueDemand);
         // printf("\n");
 
