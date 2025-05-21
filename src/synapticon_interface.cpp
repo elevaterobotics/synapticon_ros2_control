@@ -657,13 +657,12 @@ void SynapticonSystemInterface::somanetCyclicLoop(
                 // With a floor of Y% torque (below that, the motor doesn't move)
                 if (target_torque > 0)
                 {
-                  // target_torque = std::clamp(target_torque, 800.0, 1000.0);
-                  target_torque = 2000;
+                  // Per mill of rated torque
+                  target_torque = std::clamp(target_torque, 1200.0, 1600.0);
                 }
                 else
                 {
-                  // target_torque = std::clamp(target_torque, -1000.0, -800.0);
-                  target_torque = -2000;
+                  target_torque = std::clamp(target_torque, -1600.0, -1200.0);
                 }
                 // Don't allow control mode to change until the target position is reached
                 if (std::abs(error) < 10) {
