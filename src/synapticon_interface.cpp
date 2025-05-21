@@ -244,6 +244,12 @@ hardware_interface::return_type
 SynapticonSystemInterface::prepare_command_mode_switch(
     const std::vector<std::string> &start_interfaces,
     const std::vector<std::string> &stop_interfaces) {
+  if (!allow_mode_change_)
+  {
+    RCLCPP_ERROR(get_logger(), "A control mode change is disallowed at this moment.");
+    return hardware_interface::return_type::ERROR;
+  }
+
   // Prepare for new command modes
   std::vector<control_level_t> new_modes = {};
   for (const std::string& key : start_interfaces) {
@@ -639,8 +645,16 @@ void SynapticonSystemInterface::somanetCyclicLoop(
                 // A potentiometer error of 64,000 corresponds to a torque of 1000
                 // i.e. full torque when the error is a maximum
                 // Hence K_P = 1/64 is reasonable
-                static double K_P = 1/64;
-                double target_torque = K_P * (in_somanet_1_[joint_idx]->AnalogInput2 - threadsafe_commands_spring_adjust_[joint_idx]);
+                double K_P = 1/64;
+                double error = in_somanet_1_[joint_idx]->AnalogInput2 - threadsafe_commands_spring_adjust_[joint_idx];
+                // Don't allow control mode to change until the target position is reached
+                if (std::abs(error) < 100) {
+                  allow_mode_change_ = true;
+                }
+                else {
+                  allow_mode_change_ = false;
+                }
+                double target_torque = K_P * error;
                 // A ceiling at 100% of rated torque
                 // With a floor of 20% torque (below that, the motor doesn't move)
                 if (target_torque > 0)

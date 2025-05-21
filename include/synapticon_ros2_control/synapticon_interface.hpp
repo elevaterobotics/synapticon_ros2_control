@@ -119,10 +119,10 @@ private:
   /**
    * @brief Somanet control loop runs in a dedicated thread
    * This steps through several states to get to Operational, if needed
-   * @param in_normal_op_mode_ A flag to the main thread that the Somanet state
+   * @param in_normal_op_mode A flag to the main thread that the Somanet state
    * machine is ready
    */
-  void somanetCyclicLoop(std::atomic<bool> &in_normal_op_mode_);
+  void somanetCyclicLoop(std::atomic<bool> &in_normal_op_mode);
 
   std::optional<std::thread> somanet_control_thread_;
 
@@ -181,6 +181,8 @@ private:
   std::atomic<int> expected_wkc_;
   std::atomic<bool> needlf_ = false;
   std::atomic<bool> in_normal_op_mode_ = false;
+  // During spring adjust, don't allow control mode to change until the target position is reached
+  std::atomic<bool> allow_mode_change_ = true;
 };
 
 } // namespace synapticon_ros2_control
