@@ -651,25 +651,26 @@ void SynapticonSystemInterface::somanetCyclicLoop(
                 // Hence K_P = 1/64 is reasonable
                 double K_P = 1/64;
                 double error = in_somanet_1_[joint_idx]->AnalogInput2 - threadsafe_commands_spring_adjust_[joint_idx];
+                double target_torque = K_P * error;
+                // A ceiling at 100% of rated torque
+                // With a floor of 10% torque (below that, the motor doesn't move)
+                if (target_torque > 0)
+                {
+                  target_torque = std::clamp(target_torque, 50.0, 1000.0);
+                }
+                else
+                {
+                  target_torque = std::clamp(target_torque, -1000.0, -50.0);
+                }
                 // Don't allow control mode to change until the target position is reached
-                if (std::abs(error) < 100) {
+                if (std::abs(error) < 10) {
                   allow_mode_change_ = true;
+                  target_torque = 0;
                 }
                 else {
                   allow_mode_change_ = false;
                 }
-                double target_torque = K_P * error;
-                // A ceiling at 100% of rated torque
-                // With a floor of 20% torque (below that, the motor doesn't move)
-                if (target_torque > 0)
-                {
-                  target_torque = std::clamp(target_torque, 200.0, 1000.0);
-                }
-                else
-                {
-                  target_torque = std::clamp(target_torque, -1000.0, -200.0);
-                }
-                std::cerr << target_torque << std::endl;
+                std::cerr << in_somanet_1_[joint_idx]->AnalogInput2 << std::endl;
                 out_somanet_1_[joint_idx]->TargetTorque = target_torque;
                 out_somanet_1_[joint_idx]->OpMode = PROFILE_TORQUE_MODE;
                 out_somanet_1_[joint_idx]->TorqueOffset = 0;
