@@ -641,8 +641,16 @@ void SynapticonSystemInterface::somanetCyclicLoop(
                 // Hence K_P = 1/64 is reasonable
                 static double K_P = 1/64;
                 double target_torque = K_P * (in_somanet_1_[joint_idx]->AnalogInput2 - threadsafe_commands_spring_adjust_[joint_idx]);
-                // For now, clamp at 80% of rated torque
-                target_torque = std::clamp(target_torque, -800.0, 800.0);
+                // A ceiling at 100% of rated torque
+                // With a floor of 20% torque (below that, the motor doesn't move)
+                if (target_torque > 0)
+                {
+                  target_torque = std::clamp(target_torque, 200.0, 1000.0);
+                }
+                else
+                {
+                  target_torque = std::clamp(target_torque, -1000.0, -200.0);
+                }
                 out_somanet_1_[joint_idx]->TargetTorque = target_torque;
                 out_somanet_1_[joint_idx]->OpMode = PROFILE_TORQUE_MODE;
                 out_somanet_1_[joint_idx]->TorqueOffset = 0;
