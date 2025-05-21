@@ -651,16 +651,18 @@ void SynapticonSystemInterface::somanetCyclicLoop(
                 // Hence K_P = 1/64 is reasonable
                 double K_P = 1/64;
                 double error = in_somanet_1_[joint_idx]->AnalogInput2 - threadsafe_commands_spring_adjust_[joint_idx];
-                double target_torque = K_P * error;
+                double target_torque = -K_P * error;
                 // A ceiling at 100% of rated torque
                 // With a floor of 10% torque (below that, the motor doesn't move)
                 if (target_torque > 0)
                 {
-                  target_torque = std::clamp(target_torque, 50.0, 1000.0);
+                  target_torque = std::clamp(target_torque, 500.0, 1000.0);
+                  // target_torque = 1000;
                 }
                 else
                 {
-                  target_torque = std::clamp(target_torque, -1000.0, -50.0);
+                  target_torque = std::clamp(target_torque, -1000.0, -500.0);
+                  // target_torque = -1000;
                 }
                 // Don't allow control mode to change until the target position is reached
                 if (std::abs(error) < 10) {
