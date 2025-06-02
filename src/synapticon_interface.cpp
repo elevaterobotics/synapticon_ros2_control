@@ -692,10 +692,10 @@ void SynapticonSystemInterface::somanetCyclicLoop(
               }
               // All other joints: hold position
               else {
-                out_somanet_1_[joint_idx]->TargetVelocity = 0;
-                out_somanet_1_[joint_idx]->OpMode = CYCLIC_VELOCITY_MODE;
-                out_somanet_1_[joint_idx]->VelocityOffset = 0;
-                out_somanet_1_[joint_idx]->Controlword = NORMAL_OPERATION_BRAKES_OFF;
+                // TODO: the brakes click on and off repeatedly
+                out_somanet_1_[joint_idx]->OpMode = PROFILE_TORQUE_MODE;
+                out_somanet_1_[joint_idx]->TorqueOffset = 0;
+                out_somanet_1_[joint_idx]->Controlword = NORMAL_OPERATION_BRAKES_ON;
               }
             }
             else if (control_level_[joint_idx] == control_level_t::UNDEFINED) {
