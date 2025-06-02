@@ -282,13 +282,6 @@ SynapticonSystemInterface::prepare_command_mode_switch(
                  "All joints must be given a new mode at the same time.");
     return hardware_interface::return_type::ERROR;
   }
-  // All joints must have the same command mode
-  if (!std::all_of(
-          new_modes.begin() + 1, new_modes.end(),
-          [&](control_level_t mode) { return mode == new_modes[0]; })) {
-    RCLCPP_FATAL(get_logger(), "All joints must have the same command mode.");
-    return hardware_interface::return_type::ERROR;
-  }
 
   // Stop motion on all relevant joints
   for (const std::string& key : stop_interfaces) {
