@@ -640,12 +640,8 @@ void SynapticonSystemInterface::somanetCyclicLoop(
             {
               // Spring adjust joint: proportional control based on analog input 2 potentiometer
               if (joint_idx == SPRING_ADJUST_JOINT_IDX) {
-                // A potentiometer error of 64,000 corresponds to a torque of 1000
-                // i.e. full torque when the error is a maximum
-                // Hence K_P = 1/64 is reasonable
-                // But Mark is ignoring all this for now, sorry
-                // Also for some reason we are reading the potentiometer on AnalogInput4
-                double K_P = 1.0;
+                // For some reason we are reading the potentiometer on AnalogInput4, should be 2
+                double K_P = 0.6;
                 double error = in_somanet_1_[joint_idx]->AnalogInput4 - threadsafe_commands_spring_adjust_[joint_idx];
                 double target_torque = - K_P * error;
                 // std::cerr << "-----------------------------" << std::endl;
@@ -658,21 +654,21 @@ void SynapticonSystemInterface::somanetCyclicLoop(
                 if (target_torque > 0)
                 {
                   // Per mill of rated torque
-                  target_torque = std::clamp(target_torque, 0.0, 2000.0);
+                  target_torque = std::clamp(target_torque, 0.0, 1500.0);
                 }
                 else
                 {
-                  target_torque = std::clamp(target_torque, -2000.0, 0.0);
+                  target_torque = std::clamp(target_torque, -1500.0, 0.0);
                 }
                 // Don't allow control mode to change until the target position is reached
-                if (std::abs(error) < 100) {
+                if (std::abs(error) < 200) {
                   allow_mode_change_ = true;
                   target_torque = 0;
                 }
                 else {
                   allow_mode_change_ = false;
                 }
-                std::cerr << "target_torque post : " << target_torque << std::endl;
+                // std::cerr << "target_torque post : " << target_torque << std::endl;
 
                 // Ensure a valid command
                 if (std::isnan(threadsafe_commands_spring_adjust_[joint_idx])) {
