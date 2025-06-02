@@ -600,6 +600,10 @@ void SynapticonSystemInterface::somanetCyclicLoop(
           else if ((in_somanet_1_[joint_idx]->Statusword &
                     0b0000000001101111) == 0b0000000000100111) {
             in_normal_op_mode = true;
+            // Usually do nothing for the spring adjust joint
+            if (joint_idx == SPRING_ADJUST_JOINT_IDX && control_level_[joint_idx] != control_level_t::SPRING_ADJUST) {
+              continue;
+            }
             if (control_level_[joint_idx] == control_level_t::EFFORT) {
               if (!std::isnan(threadsafe_commands_efforts_[joint_idx])) {
                 out_somanet_1_[joint_idx]->TargetTorque =
