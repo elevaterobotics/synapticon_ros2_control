@@ -650,11 +650,11 @@ void SynapticonSystemInterface::somanetCyclicLoop(
                 double K_P = 1.0;
                 double error = in_somanet_1_[joint_idx]->AnalogInput4 - threadsafe_commands_spring_adjust_[joint_idx];
                 double target_torque = - K_P * error;
-                std::cerr << "-----------------------------" << std::endl;
-                std::cerr << "potentiometer pos  : " << in_somanet_1_[joint_idx]->AnalogInput4 << std::endl;
-                std::cerr << "goal pos           : " << threadsafe_commands_spring_adjust_[joint_idx] << std::endl;
-                std::cerr << "error              : " << error << std::endl;
-                std::cerr << "target_torque pre  : " << target_torque << std::endl;
+                // std::cerr << "-----------------------------" << std::endl;
+                // std::cerr << "potentiometer pos  : " << in_somanet_1_[joint_idx]->AnalogInput4 << std::endl;
+                // std::cerr << "goal pos           : " << threadsafe_commands_spring_adjust_[joint_idx] << std::endl;
+                // std::cerr << "error              : " << error << std::endl;
+                // std::cerr << "target_torque pre  : " << target_torque << std::endl;
                 // A ceiling at X% of rated torque
                 // With a floor of Y% torque (below that, the motor doesn't move)
                 if (target_torque > 0)
