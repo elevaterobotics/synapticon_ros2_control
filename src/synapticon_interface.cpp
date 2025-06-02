@@ -267,7 +267,12 @@ SynapticonSystemInterface::prepare_command_mode_switch(
       } else if (key == info_.joints[i].name + "/quick_stop") {
         new_modes.push_back(control_level_t::QUICK_STOP);
       } else if (key == info_.joints[i].name + "/spring_adjust") {
-        new_modes.push_back(control_level_t::SPRING_ADJUST);
+        // Spring adjust puts all joints in QUICK_STOP mode except the spring adjust joint
+        if (i == SPRING_ADJUST_JOINT_IDX) {
+          new_modes.push_back(control_level_t::SPRING_ADJUST);
+        } else {
+          new_modes.push_back(control_level_t::QUICK_STOP);
+        }
       }
     }
   }
@@ -690,12 +695,8 @@ void SynapticonSystemInterface::somanetCyclicLoop(
                 out_somanet_1_[joint_idx]->TorqueOffset = 0;
                 out_somanet_1_[joint_idx]->Controlword = NORMAL_OPERATION_BRAKES_OFF;
               }
-              // All other joints: hold position
               else {
-                // TODO: the brakes click on and off repeatedly
-                out_somanet_1_[joint_idx]->OpMode = PROFILE_TORQUE_MODE;
-                out_somanet_1_[joint_idx]->TorqueOffset = 0;
-                out_somanet_1_[joint_idx]->Controlword = NORMAL_OPERATION_BRAKES_ON;
+                std::cerr << "Should never get here since the other joints are in QUICK_STOP mode" << std::endl;
               }
             }
             else if (control_level_[joint_idx] == control_level_t::UNDEFINED) {
