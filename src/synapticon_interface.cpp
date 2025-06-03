@@ -487,6 +487,10 @@ SynapticonSystemInterface::~SynapticonSystemInterface() {
     somanet_control_thread_->join();
   }
 
+  if (estop_check_thread_ && estop_check_thread_->joinable()) {
+    estop_check_thread_->join();
+  }
+
   // Close the ethercat connection
   ec_close();
 }
@@ -760,17 +764,18 @@ void SynapticonSystemInterface::eStopCheck(std::atomic<bool> &e_stop_engaged) {
     uint8_t subindex = 0x01;
     //Specify if you want to write to/read from all subindexes within the specified index
     bool operate_all_subindices = FALSE;
-    //The place to store the value read from the object, or the value that you are about to write to the object. Make sure to change data type when you change index/subindex.
+    //The place to store the value read from the object
     bool value_holder;
     //Bit size of the object that you are going to operate
-    int object_size;
-    //Use sizeof() to directly get bit size of the object
-    object_size = sizeof(value_holder);
+    int object_size = sizeof(value_holder);
 
-    ec_SDOread(slave_number, index, subindex, operate_all_subindices, &object_size, &value_holder, EC_TIMEOUTRXM);
-    printf("The value of the object is %" PRId32 "\n", value_holder);
-    // TODO: uncomment when done testing
-    // e_stop_engaged = value_holder;
+    int result = ec_SDOread(slave_number, index, subindex, operate_all_subindices, &object_size, &value_holder, EC_TIMEOUTRXM);
+
+    if (result <= 0) {
+      RCLCPP_FATAL(get_logger(), "Failed to read emergency stop status from slave %d", slave_number);
+      // Force an e-stop
+      e_stop_engaged = true;
+    }
 
     osal_usleep(10000);
   }
