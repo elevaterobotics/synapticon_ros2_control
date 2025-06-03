@@ -124,7 +124,14 @@ private:
    */
   void somanetCyclicLoop(std::atomic<bool> &in_normal_op_mode);
 
+  /**
+   * @brief Periodically check for emergency stop
+   * @param e_stop_engaged This flag notifies main thread that the emergency stop is pressed
+   */
+  void eStopCheck(std::atomic<bool> &e_stop_engaged);
+
   std::optional<std::thread> somanet_control_thread_;
+  std::optional<std::thread> estop_check_thread_;
 
   size_t num_joints_;
 
@@ -181,13 +188,14 @@ private:
   std::atomic<bool> needlf_ = false;
   std::atomic<bool> in_normal_op_mode_ = false;
   struct SpringAdjust
-    {
-      // During spring adjust, don't allow control mode to change until the target position is reached
-      std::atomic<bool> allow_mode_change_ = true;
-      // Spring adjust derivative term variables
-      std::optional<double> error_prev_;
-      std::chrono::steady_clock::time_point time_prev_ = std::chrono::steady_clock::now();
-    } spring_adjust_state_;
+  {
+    // During spring adjust, don't allow control mode to change until the target position is reached
+    std::atomic<bool> allow_mode_change_ = true;
+    // Spring adjust derivative term variables
+    std::optional<double> error_prev_;
+    std::chrono::steady_clock::time_point time_prev_ = std::chrono::steady_clock::now();
+  } spring_adjust_state_;
+  std::atomic<bool> e_stop_engaged_ = false;
 };
 
 } // namespace synapticon_ros2_control

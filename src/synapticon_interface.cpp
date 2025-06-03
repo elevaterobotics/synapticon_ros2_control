@@ -246,6 +246,11 @@ hardware_interface::CallbackReturn SynapticonSystemInterface::on_init(
       std::thread(&SynapticonSystemInterface::somanetCyclicLoop, this,
                   std::ref(in_normal_op_mode_));
 
+  // A thread to check for emergency stop
+  estop_check_thread_ =
+      std::thread(&SynapticonSystemInterface::eStopCheck, this,
+                  std::ref(e_stop_engaged_));
+
   return hardware_interface::CallbackReturn::SUCCESS;
 }
 
@@ -588,7 +593,8 @@ void SynapticonSystemInterface::somanetCyclicLoop(
           {
             // If the QUICK_STOP controller is on, don't leave this state
             if ((control_level_[joint_idx] != control_level_t::QUICK_STOP) &&
-               (control_level_[joint_idx] != control_level_t::UNDEFINED))
+               (control_level_[joint_idx] != control_level_t::UNDEFINED) &&
+               !e_stop_engaged_)
             {
               out_somanet_1_[joint_idx]->Controlword = 0b00000110;
             }
@@ -611,7 +617,15 @@ void SynapticonSystemInterface::somanetCyclicLoop(
             if (joint_idx == SPRING_ADJUST_JOINT_IDX && control_level_[joint_idx] != control_level_t::SPRING_ADJUST) {
               continue;
             }
-            if (control_level_[joint_idx] == control_level_t::EFFORT) {
+            if (e_stop_engaged_)
+            {
+              // Turn the brake on
+              out_somanet_1_[joint_idx]->OpMode = PROFILE_TORQUE_MODE;
+              out_somanet_1_[joint_idx]->TorqueOffset = 0;
+              out_somanet_1_[joint_idx]->Controlword = NORMAL_OPERATION_BRAKES_ON;
+            }
+
+            else if (control_level_[joint_idx] == control_level_t::EFFORT) {
               if (!std::isnan(threadsafe_commands_efforts_[joint_idx])) {
                 out_somanet_1_[joint_idx]->TargetTorque =
                     threadsafe_commands_efforts_[joint_idx];
@@ -733,6 +747,32 @@ void SynapticonSystemInterface::somanetCyclicLoop(
       }
     } // scope of in_somanet_ mutex lock
     osal_usleep(5000);
+  }
+}
+
+void SynapticonSystemInterface::eStopCheck(std::atomic<bool> &e_stop_engaged) {
+  while (rclcpp::ok()) {
+    //The slave you want to read from/write to. 1 means the first slave
+    uint16_t slave_number = 1;
+    //The index of the object you want to operate
+    uint16_t index = 0x6621;
+    // STO
+    uint8_t subindex = 0x01;
+    //Specify if you want to write to/read from all subindexes within the specified index
+    bool operate_all_subindices = FALSE;
+    //The place to store the value read from the object, or the value that you are about to write to the object. Make sure to change data type when you change index/subindex.
+    bool value_holder;
+    //Bit size of the object that you are going to operate
+    int object_size;
+    //Use sizeof() to directly get bit size of the object
+    object_size = sizeof(value_holder);
+
+    ec_SDOread(slave_number, index, subindex, operate_all_subindices, &object_size, &value_holder, EC_TIMEOUTRXM);
+    printf("The value of the object is %" PRId32 "\n", value_holder);
+    // TODO: uncomment when done testing
+    // e_stop_engaged = value_holder;
+
+    osal_usleep(10000);
   }
 }
 
