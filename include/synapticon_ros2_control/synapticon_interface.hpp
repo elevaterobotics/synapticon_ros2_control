@@ -128,7 +128,7 @@ private:
    * @brief Periodically check for emergency stop
    * @param e_stop_engaged This flag notifies main thread that the emergency stop is pressed
    */
-  void eStopCheck(std::atomic<bool> &e_stop_engaged);
+  bool eStopEngaged();
 
   std::optional<std::thread> somanet_control_thread_;
 

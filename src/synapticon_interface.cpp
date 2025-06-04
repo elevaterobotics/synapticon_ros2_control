@@ -288,12 +288,6 @@ SynapticonSystemInterface::prepare_command_mode_switch(
       }
     }
   }
-  // All joints must be given new command mode at the same time
-  if (!start_interfaces.empty() && (new_modes.size() != num_joints_)) {
-    RCLCPP_FATAL(getLogger(),
-                 "All joints must be given a new mode at the same time.");
-    return hardware_interface::return_type::ERROR;
-  }
 
   // Stop motion on all relevant joints
   for (const std::string& key : stop_interfaces) {
@@ -561,8 +555,6 @@ void SynapticonSystemInterface::somanetCyclicLoop(
       ec_send_processdata();
       wkc_ = ec_receive_processdata(EC_TIMEOUTRET);
 
-      bool e_stop_engaged = eStopCheck();
-
       if (wkc_ >= expected_wkc_) {
         for (size_t joint_idx = 0; joint_idx < num_joints_; ++joint_idx) {
           if (first_iteration.at(joint_idx)) {
@@ -578,6 +570,25 @@ void SynapticonSystemInterface::somanetCyclicLoop(
             first_iteration.at(joint_idx) = false;
           }
 
+          // Turn the brake on for e-stop
+          if (control_level_[joint_idx] != control_level_t::QUICK_STOP && eStopEngaged())
+          {
+            on_deactivate(rclcpp_lifecycle::State());
+            // TODO: always add new interfaces to this list
+            // TODO: only do the cmd mode switch once per e-stop
+            allow_mode_change_ = true;
+            std::vector<std::string> start_interfaces;
+            std::vector<std::string> stop_interfaces;
+            for (size_t i = 0; i < num_joints_; ++i) {
+              start_interfaces.push_back(info_.joints[i].name + "/quick_stop");
+              stop_interfaces.push_back(info_.joints[i].name + "/" + hardware_interface::HW_IF_EFFORT);
+              stop_interfaces.push_back(info_.joints[i].name + "/" + hardware_interface::HW_IF_VELOCITY);
+              stop_interfaces.push_back(info_.joints[i].name + "/" + hardware_interface::HW_IF_POSITION);
+              stop_interfaces.push_back(info_.joints[i].name + "/" + "spring_adjust");
+            }
+            prepare_command_mode_switch(start_interfaces, stop_interfaces);
+          }
+
           // Fault reset: Fault -> Switch on disabled, if the drive is in fault
           // state
           if ((in_somanet_1_[joint_idx]->Statusword & 0b0000000001001111) ==
@@ -590,8 +601,7 @@ void SynapticonSystemInterface::somanetCyclicLoop(
           {
             // If the QUICK_STOP controller is on, don't leave this state
             if ((control_level_[joint_idx] != control_level_t::QUICK_STOP) &&
-               (control_level_[joint_idx] != control_level_t::UNDEFINED) &&
-               !e_stop_engaged)
+               (control_level_[joint_idx] != control_level_t::UNDEFINED))
             {
               out_somanet_1_[joint_idx]->Controlword = 0b00000110;
             }
@@ -614,15 +624,7 @@ void SynapticonSystemInterface::somanetCyclicLoop(
             if (joint_idx == SPRING_ADJUST_JOINT_IDX && control_level_[joint_idx] != control_level_t::SPRING_ADJUST) {
               continue;
             }
-            if (e_stop_engaged)
-            {
-              // Turn the brake on
-              out_somanet_1_[joint_idx]->OpMode = PROFILE_TORQUE_MODE;
-              out_somanet_1_[joint_idx]->TorqueOffset = 0;
-              out_somanet_1_[joint_idx]->Controlword = NORMAL_OPERATION_BRAKES_ON;
-            }
-
-            else if (control_level_[joint_idx] == control_level_t::EFFORT) {
+            if (control_level_[joint_idx] == control_level_t::EFFORT) {
               if (!std::isnan(threadsafe_commands_efforts_[joint_idx])) {
                 out_somanet_1_[joint_idx]->TargetTorque =
                     threadsafe_commands_efforts_[joint_idx];
@@ -747,7 +749,7 @@ void SynapticonSystemInterface::somanetCyclicLoop(
   }
 }
 
-bool SynapticonSystemInterface::eStopCheck() {
+bool SynapticonSystemInterface::eStopEngaged() {
   //The slave you want to read from/write to. 1 means the first slave
   uint16_t slave_number = 1;
   //The index of the object you want to operate
@@ -768,8 +770,10 @@ bool SynapticonSystemInterface::eStopCheck() {
     // Force an e-stop
     return true;
   }
-  // TODO: return actual state of STO
-  return false;
+  if (value_holder) {
+    std::cerr << "Emergency stop engaged" << std::endl;
+  }
+  return value_holder;
 }
 
 } // namespace synapticon_ros2_control
