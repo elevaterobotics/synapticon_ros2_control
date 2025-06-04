@@ -642,10 +642,16 @@ void SynapticonSystemInterface::somanetCyclicLoop(
               if (joint_idx == SPRING_ADJUST_JOINT_IDX) {
                 // For some reason we are reading the potentiometer on AnalogInput4, should be 2
                 double K_P = 0.6;
+                double K_D = 0.0;
                 double error = in_somanet_1_[joint_idx]->AnalogInput4 - threadsafe_commands_spring_adjust_[joint_idx];
-                double target_torque = - K_P * error;
-                // std::cerr << "-----------------------------" << std::endl;
-                // std::cerr << "potentiometer pos  : " << in_somanet_1_[joint_idx]->AnalogInput4 << std::endl;
+                std::chrono::steady_clock::time_point time_now = std::chrono::steady_clock::now();
+                std::chrono::duration<double> time_elapsed = time_now - time_prev_;
+                double error_dt = (error - error_prev_) / time_elapsed.count();
+                error_prev_ = error;
+                time_prev_ = time_now;
+                double target_torque = - K_P * error - K_D * error_dt;
+                std::cerr << "-----------------------------" << std::endl;
+                std::cerr << "potentiometer pos  : " << in_somanet_1_[joint_idx]->AnalogInput4 << std::endl;
                 // std::cerr << "goal pos           : " << threadsafe_commands_spring_adjust_[joint_idx] << std::endl;
                 // std::cerr << "error              : " << error << std::endl;
                 // std::cerr << "target_torque pre  : " << target_torque << std::endl;
@@ -668,7 +674,6 @@ void SynapticonSystemInterface::somanetCyclicLoop(
                 else {
                   allow_mode_change_ = false;
                 }
-                // std::cerr << "target_torque post : " << target_torque << std::endl;
 
                 // Ensure a valid command
                 if (std::isnan(threadsafe_commands_spring_adjust_[joint_idx])) {
