@@ -131,7 +131,6 @@ private:
   void eStopCheck(std::atomic<bool> &e_stop_engaged);
 
   std::optional<std::thread> somanet_control_thread_;
-  std::optional<std::thread> estop_check_thread_;
 
   size_t num_joints_;
 

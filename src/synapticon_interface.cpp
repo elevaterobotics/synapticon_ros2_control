@@ -246,11 +246,6 @@ hardware_interface::CallbackReturn SynapticonSystemInterface::on_init(
       std::thread(&SynapticonSystemInterface::somanetCyclicLoop, this,
                   std::ref(in_normal_op_mode_));
 
-  // A thread to check for emergency stop
-  estop_check_thread_ =
-      std::thread(&SynapticonSystemInterface::eStopCheck, this,
-                  std::ref(e_stop_engaged_));
-
   return hardware_interface::CallbackReturn::SUCCESS;
 }
 
@@ -487,10 +482,6 @@ SynapticonSystemInterface::~SynapticonSystemInterface() {
     somanet_control_thread_->join();
   }
 
-  if (estop_check_thread_ && estop_check_thread_->joinable()) {
-    estop_check_thread_->join();
-  }
-
   // Close the ethercat connection
   ec_close();
 }
@@ -570,6 +561,8 @@ void SynapticonSystemInterface::somanetCyclicLoop(
       ec_send_processdata();
       wkc_ = ec_receive_processdata(EC_TIMEOUTRET);
 
+      bool e_stop_engaged = eStopCheck();
+
       if (wkc_ >= expected_wkc_) {
         for (size_t joint_idx = 0; joint_idx < num_joints_; ++joint_idx) {
           if (first_iteration.at(joint_idx)) {
@@ -598,7 +591,7 @@ void SynapticonSystemInterface::somanetCyclicLoop(
             // If the QUICK_STOP controller is on, don't leave this state
             if ((control_level_[joint_idx] != control_level_t::QUICK_STOP) &&
                (control_level_[joint_idx] != control_level_t::UNDEFINED) &&
-               !e_stop_engaged_)
+               !e_stop_engaged)
             {
               out_somanet_1_[joint_idx]->Controlword = 0b00000110;
             }
@@ -621,7 +614,7 @@ void SynapticonSystemInterface::somanetCyclicLoop(
             if (joint_idx == SPRING_ADJUST_JOINT_IDX && control_level_[joint_idx] != control_level_t::SPRING_ADJUST) {
               continue;
             }
-            if (e_stop_engaged_)
+            if (e_stop_engaged)
             {
               // Turn the brake on
               out_somanet_1_[joint_idx]->OpMode = PROFILE_TORQUE_MODE;
@@ -754,31 +747,29 @@ void SynapticonSystemInterface::somanetCyclicLoop(
   }
 }
 
-void SynapticonSystemInterface::eStopCheck(std::atomic<bool> &e_stop_engaged) {
-  while (rclcpp::ok()) {
-    //The slave you want to read from/write to. 1 means the first slave
-    uint16_t slave_number = 1;
-    //The index of the object you want to operate
-    uint16_t index = 0x6621;
-    // STO
-    uint8_t subindex = 0x01;
-    //Specify if you want to write to/read from all subindexes within the specified index
-    bool operate_all_subindices = FALSE;
-    //The place to store the value read from the object
-    bool value_holder;
-    //Bit size of the object that you are going to operate
-    int object_size = sizeof(value_holder);
+bool SynapticonSystemInterface::eStopCheck() {
+  //The slave you want to read from/write to. 1 means the first slave
+  uint16_t slave_number = 1;
+  //The index of the object you want to operate
+  uint16_t index = 0x6621;
+  // STO
+  uint8_t subindex = 0x01;
+  //Specify if you want to write to/read from all subindexes within the specified index
+  bool operate_all_subindices = FALSE;
+  //The place to store the value read from the object
+  bool value_holder;
+  //Bit size of the object that you are going to operate
+  int object_size = sizeof(value_holder);
 
-    int result = ec_SDOread(slave_number, index, subindex, operate_all_subindices, &object_size, &value_holder, EC_TIMEOUTRXM);
+  int result = ec_SDOread(slave_number, index, subindex, operate_all_subindices, &object_size, &value_holder, EC_TIMEOUTRXM);
 
-    if (result <= 0) {
-      RCLCPP_FATAL(get_logger(), "Failed to read emergency stop status from slave %d", slave_number);
-      // Force an e-stop
-      e_stop_engaged = true;
-    }
-
-    osal_usleep(10000);
+  if (result <= 0) {
+    RCLCPP_FATAL(get_logger(), "Failed to read emergency stop status from slave %d", slave_number);
+    // Force an e-stop
+    return true;
   }
+  // TODO: return actual state of STO
+  return false;
 }
 
 } // namespace synapticon_ros2_control
