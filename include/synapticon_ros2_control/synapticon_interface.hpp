@@ -184,7 +184,7 @@ private:
   // During spring adjust, don't allow control mode to change until the target position is reached
   std::atomic<bool> allow_mode_change_ = true;
   // Spring adjust derivative term variables
-  double error_prev_;
+  std::optional<double> error_prev_;
   std::chrono::steady_clock::time_point time_prev_ = std::chrono::steady_clock::now();
 };
 

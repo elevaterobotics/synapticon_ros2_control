@@ -270,6 +270,8 @@ SynapticonSystemInterface::prepare_command_mode_switch(
         // Spring adjust puts all joints in QUICK_STOP mode except the spring adjust joint
         if (i == SPRING_ADJUST_JOINT_IDX) {
           new_modes.push_back(control_level_t::SPRING_ADJUST);
+          time_prev_ = std::chrono::steady_clock::now();
+          std::cerr << "Potentiometer pos: " << in_somanet_1_[SPRING_ADJUST_JOINT_IDX]->AnalogInput4 << std::endl;
         } else {
           new_modes.push_back(control_level_t::QUICK_STOP);
         }
@@ -646,11 +648,13 @@ void SynapticonSystemInterface::somanetCyclicLoop(
                 double error = in_somanet_1_[joint_idx]->AnalogInput4 - threadsafe_commands_spring_adjust_[joint_idx];
                 std::chrono::steady_clock::time_point time_now = std::chrono::steady_clock::now();
                 std::chrono::duration<double> time_elapsed = time_now - time_prev_;
-                double error_dt = (error - error_prev_) / time_elapsed.count();
+                double error_dt = 0;
+                if (error_prev_) {
+                  error_dt = (error - *error_prev_) / time_elapsed.count();
+                }
                 error_prev_ = error;
                 time_prev_ = time_now;
                 double target_torque = - K_P * error - K_D * error_dt;
-                std::cerr << "potentiometer pos  : " << in_somanet_1_[joint_idx]->AnalogInput4 << std::endl;
                 // A ceiling at X% of rated torque
                 // With a floor of Y% torque (below that, the motor doesn't move)
                 if (target_torque > 0)
