@@ -549,11 +549,7 @@ void SynapticonSystemInterface::somanetCyclicLoop(
     std::atomic<bool> &in_normal_op_mode) {
   std::vector<bool> first_iteration(num_joints_ , true);
 
-  bool e_stop_engaged = false;
-
-  while (rclcpp::ok() && !e_stop_engaged) {
-
-    e_stop_engaged = eStopEngaged();
+  while (rclcpp::ok() && !eStopEngaged()) {
 
     {
       std::lock_guard<std::mutex> lock(in_somanet_mtx_);
@@ -732,31 +728,24 @@ void SynapticonSystemInterface::somanetCyclicLoop(
       }
     } // scope of in_somanet_ mutex lock
     osal_usleep(5000);
-
-    // Emergency stop handling
-    if (e_stop_engaged) {
-      RCLCPP_ERROR(get_logger(), "Emergency stop engaged! Shutting down gracefully...");
-      
-      // Set all motors to safe state with brakes on
-      {
-        std::lock_guard<std::mutex> lock(in_somanet_mtx_);
-        for (size_t joint_idx = 0; joint_idx < num_joints_; ++joint_idx) {
-          out_somanet_1_[joint_idx]->OpMode = PROFILE_TORQUE_MODE;
-          out_somanet_1_[joint_idx]->TorqueOffset = 0;
-          out_somanet_1_[joint_idx]->TargetTorque = 0;
-          out_somanet_1_[joint_idx]->Controlword = NORMAL_OPERATION_BRAKES_ON;
-        }
-        ec_send_processdata();
-        ec_receive_processdata(EC_TIMEOUTRET);
-      }
-
-      // Signal shutdown and let destructor handle cleanup
-      in_normal_op_mode = false;
-      // This will trigger the destructor
-      delete this;
-      return;
-    }
   }
+
+  // Before exiting, set all motors to safe state with brakes on
+  std::lock_guard<std::mutex> lock(in_somanet_mtx_);
+  for (size_t joint_idx = 0; joint_idx < num_joints_; ++joint_idx) {
+    out_somanet_1_[joint_idx]->OpMode = PROFILE_TORQUE_MODE;
+    out_somanet_1_[joint_idx]->TorqueOffset = 0;
+    out_somanet_1_[joint_idx]->TargetTorque = 0;
+    out_somanet_1_[joint_idx]->Controlword = NORMAL_OPERATION_BRAKES_ON;
+  }
+  ec_send_processdata();
+  ec_receive_processdata(EC_TIMEOUTRET);
+
+  // Signal shutdown to somanet control thread
+  in_normal_op_mode = false;
+  ec_close();
+  // Exit the thread
+  return;
 }
 
 bool SynapticonSystemInterface::eStopEngaged() {
@@ -779,9 +768,6 @@ bool SynapticonSystemInterface::eStopEngaged() {
     RCLCPP_FATAL(get_logger(), "Failed to read emergency stop status from slave %d", slave_number);
     // Force an e-stop
     return true;
-  }
-  if (value_holder) {
-    std::cerr << "Emergency stop engaged" << std::endl;
   }
   return value_holder;
 }
