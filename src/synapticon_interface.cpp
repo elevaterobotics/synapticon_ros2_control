@@ -245,7 +245,7 @@ hardware_interface::return_type
 SynapticonSystemInterface::prepare_command_mode_switch(
     const std::vector<std::string> &start_interfaces,
     const std::vector<std::string> &stop_interfaces) {
-  if (!allow_mode_change_)
+  if (!spring_adjust_state_.allow_mode_change_)
   {
     RCLCPP_ERROR(get_logger(), "A control mode change is disallowed at this moment.");
     return hardware_interface::return_type::ERROR;
@@ -270,8 +270,9 @@ SynapticonSystemInterface::prepare_command_mode_switch(
         // Spring adjust puts all joints in QUICK_STOP mode except the spring adjust joint
         if (i == SPRING_ADJUST_JOINT_IDX) {
           new_modes.push_back(control_level_t::SPRING_ADJUST);
-          time_prev_ = std::chrono::steady_clock::now();
-          std::cerr << "Potentiometer pos: " << in_somanet_1_[SPRING_ADJUST_JOINT_IDX]->AnalogInput4 << std::endl;
+          spring_adjust_state_.time_prev_ = std::chrono::steady_clock::now();
+          spring_adjust_state_.error_prev_ = std::nullopt;
+          std::cerr << "Potentiometer at: " << in_somanet_1_[SPRING_ADJUST_JOINT_IDX]->AnalogInput4 << std::endl;
         } else {
           new_modes.push_back(control_level_t::QUICK_STOP);
         }
@@ -647,13 +648,13 @@ void SynapticonSystemInterface::somanetCyclicLoop(
                 double K_D = 0.4;
                 double error = in_somanet_1_[joint_idx]->AnalogInput4 - threadsafe_commands_spring_adjust_[joint_idx];
                 std::chrono::steady_clock::time_point time_now = std::chrono::steady_clock::now();
-                std::chrono::duration<double> time_elapsed = time_now - time_prev_;
+                std::chrono::duration<double> time_elapsed = time_now - spring_adjust_state_.time_prev_;
                 double error_dt = 0;
-                if (error_prev_) {
-                  error_dt = (error - *error_prev_) / time_elapsed.count();
+                if (spring_adjust_state_.error_prev_) {
+                  error_dt = (error - *spring_adjust_state_.error_prev_) / time_elapsed.count();
                 }
-                error_prev_ = error;
-                time_prev_ = time_now;
+                spring_adjust_state_.error_prev_ = error;
+                spring_adjust_state_.time_prev_ = time_now;
                 double target_torque = - K_P * error - K_D * error_dt;
                 // A ceiling at X% of rated torque
                 // With a floor of Y% torque (below that, the motor doesn't move)
@@ -666,13 +667,14 @@ void SynapticonSystemInterface::somanetCyclicLoop(
                 {
                   target_torque = std::clamp(target_torque, -2500.0, 0.0);
                 }
-                // Don't allow control mode to change until the target position is reached
-                if (std::abs(error) < 200) {
-                  allow_mode_change_ = true;
+                // Don't allow control mode to change until the target position is reached and is stable
+                if (std::abs(error) < 200 && error_dt == 0) {
+                  std::cout << "Position reached, potentiometer at: " << in_somanet_1_[joint_idx]->AnalogInput4 << std::endl;
+                  spring_adjust_state_.allow_mode_change_ = true;
                   target_torque = 0;
                 }
                 else {
-                  allow_mode_change_ = false;
+                  spring_adjust_state_.allow_mode_change_ = false;
                 }
 
                 // Ensure a valid command
