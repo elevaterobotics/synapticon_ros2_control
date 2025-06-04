@@ -641,8 +641,8 @@ void SynapticonSystemInterface::somanetCyclicLoop(
               // Spring adjust joint: proportional control based on analog input 2 potentiometer
               if (joint_idx == SPRING_ADJUST_JOINT_IDX) {
                 // For some reason we are reading the potentiometer on AnalogInput4, should be 2
-                double K_P = 0.6;
-                double K_D = 0.0;
+                double K_P = 1.0;
+                double K_D = 0.4;
                 double error = in_somanet_1_[joint_idx]->AnalogInput4 - threadsafe_commands_spring_adjust_[joint_idx];
                 std::chrono::steady_clock::time_point time_now = std::chrono::steady_clock::now();
                 std::chrono::duration<double> time_elapsed = time_now - time_prev_;
@@ -650,21 +650,17 @@ void SynapticonSystemInterface::somanetCyclicLoop(
                 error_prev_ = error;
                 time_prev_ = time_now;
                 double target_torque = - K_P * error - K_D * error_dt;
-                std::cerr << "-----------------------------" << std::endl;
                 std::cerr << "potentiometer pos  : " << in_somanet_1_[joint_idx]->AnalogInput4 << std::endl;
-                // std::cerr << "goal pos           : " << threadsafe_commands_spring_adjust_[joint_idx] << std::endl;
-                // std::cerr << "error              : " << error << std::endl;
-                // std::cerr << "target_torque pre  : " << target_torque << std::endl;
                 // A ceiling at X% of rated torque
                 // With a floor of Y% torque (below that, the motor doesn't move)
                 if (target_torque > 0)
                 {
                   // Per mill of rated torque
-                  target_torque = std::clamp(target_torque, 0.0, 1500.0);
+                  target_torque = std::clamp(target_torque, 0.0, 2500.0);
                 }
                 else
                 {
-                  target_torque = std::clamp(target_torque, -1500.0, 0.0);
+                  target_torque = std::clamp(target_torque, -2500.0, 0.0);
                 }
                 // Don't allow control mode to change until the target position is reached
                 if (std::abs(error) < 200) {
