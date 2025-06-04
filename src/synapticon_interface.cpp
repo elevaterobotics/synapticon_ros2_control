@@ -549,7 +549,12 @@ void SynapticonSystemInterface::somanetCyclicLoop(
     std::atomic<bool> &in_normal_op_mode) {
   std::vector<bool> first_iteration(num_joints_ , true);
 
-  while (rclcpp::ok()) {
+  bool e_stop_engaged = false;
+
+  while (rclcpp::ok() && !e_stop_engaged) {
+
+    e_stop_engaged = eStopEngaged();
+
     {
       std::lock_guard<std::mutex> lock(in_somanet_mtx_);
       ec_send_processdata();
@@ -568,25 +573,6 @@ void SynapticonSystemInterface::somanetCyclicLoop(
             }
             out_somanet_1_[joint_idx]->TargetTorque = 0;
             first_iteration.at(joint_idx) = false;
-          }
-
-          // Turn the brake on for e-stop
-          if (control_level_[joint_idx] != control_level_t::QUICK_STOP && eStopEngaged())
-          {
-            on_deactivate(rclcpp_lifecycle::State());
-            // TODO: always add new interfaces to this list
-            // TODO: only do the cmd mode switch once per e-stop
-            allow_mode_change_ = true;
-            std::vector<std::string> start_interfaces;
-            std::vector<std::string> stop_interfaces;
-            for (size_t i = 0; i < num_joints_; ++i) {
-              start_interfaces.push_back(info_.joints[i].name + "/quick_stop");
-              stop_interfaces.push_back(info_.joints[i].name + "/" + hardware_interface::HW_IF_EFFORT);
-              stop_interfaces.push_back(info_.joints[i].name + "/" + hardware_interface::HW_IF_VELOCITY);
-              stop_interfaces.push_back(info_.joints[i].name + "/" + hardware_interface::HW_IF_POSITION);
-              stop_interfaces.push_back(info_.joints[i].name + "/" + "spring_adjust");
-            }
-            prepare_command_mode_switch(start_interfaces, stop_interfaces);
           }
 
           // Fault reset: Fault -> Switch on disabled, if the drive is in fault
@@ -746,6 +732,30 @@ void SynapticonSystemInterface::somanetCyclicLoop(
       }
     } // scope of in_somanet_ mutex lock
     osal_usleep(5000);
+
+    // Emergency stop handling
+    if (e_stop_engaged) {
+      RCLCPP_ERROR(get_logger(), "Emergency stop engaged! Shutting down gracefully...");
+      
+      // Set all motors to safe state with brakes on
+      {
+        std::lock_guard<std::mutex> lock(in_somanet_mtx_);
+        for (size_t joint_idx = 0; joint_idx < num_joints_; ++joint_idx) {
+          out_somanet_1_[joint_idx]->OpMode = PROFILE_TORQUE_MODE;
+          out_somanet_1_[joint_idx]->TorqueOffset = 0;
+          out_somanet_1_[joint_idx]->TargetTorque = 0;
+          out_somanet_1_[joint_idx]->Controlword = NORMAL_OPERATION_BRAKES_ON;
+        }
+        ec_send_processdata();
+        ec_receive_processdata(EC_TIMEOUTRET);
+      }
+
+      // Signal shutdown and let destructor handle cleanup
+      in_normal_op_mode = false;
+      // This will trigger the destructor
+      delete this;
+      return;
+    }
   }
 }
 
