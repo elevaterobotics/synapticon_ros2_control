@@ -125,8 +125,7 @@ private:
   void somanetCyclicLoop(std::atomic<bool> &in_normal_op_mode);
 
   /**
-   * @brief Periodically check for emergency stop
-   * @param e_stop_engaged This flag notifies main thread that the emergency stop is pressed
+   * @brief Use an ethercat SDO read to check if the emergency stop is engaged
    */
   bool eStopEngaged();
 
