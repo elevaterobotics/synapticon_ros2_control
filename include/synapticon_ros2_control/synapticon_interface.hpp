@@ -181,13 +181,23 @@ private:
   std::atomic<int> expected_wkc_;
   std::atomic<bool> needlf_ = false;
   std::atomic<bool> in_normal_op_mode_ = false;
+
+  // Store variables related to spring adjust control mode
   struct SpringAdjust
     {
       // During spring adjust, don't allow control mode to change until the target position is reached
       std::atomic<bool> allow_mode_change_ = true;
-      // Spring adjust derivative term variables
-      std::optional<double> error_prev_;
-      std::chrono::steady_clock::time_point time_prev_ = std::chrono::steady_clock::now();
+      // Spring adjust PID controller variables
+      const double kp_ = 0.4;
+      const double ki_ = 0.1;
+      const double kd_ = 0.0;
+      const double integral_clamp_ = 1000.0;
+      // Per mill of rated torque
+      const double torque_clamp_ = 2500.0;
+      bool first_loop_ = true;
+      double error_prev_;
+      double error_sum_;
+      std::chrono::steady_clock::time_point time_prev_;
     } spring_adjust_state_;
 };
 

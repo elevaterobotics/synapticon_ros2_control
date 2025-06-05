@@ -270,9 +270,8 @@ SynapticonSystemInterface::prepare_command_mode_switch(
         // Spring adjust puts all joints in QUICK_STOP mode except the spring adjust joint
         if (i == SPRING_ADJUST_JOINT_IDX) {
           new_modes.push_back(control_level_t::SPRING_ADJUST);
-          spring_adjust_state_.time_prev_ = std::chrono::steady_clock::now();
-          spring_adjust_state_.error_prev_ = std::nullopt;
-          std::cerr << "Potentiometer at: " << in_somanet_1_[SPRING_ADJUST_JOINT_IDX]->AnalogInput4 << std::endl;
+          spring_adjust_state_.first_loop_ = true;
+          spring_adjust_state_.allow_mode_change_ = false;
         } else {
           new_modes.push_back(control_level_t::QUICK_STOP);
         }
@@ -641,51 +640,55 @@ void SynapticonSystemInterface::somanetCyclicLoop(
               out_somanet_1_[joint_idx]->Controlword = NORMAL_OPERATION_BRAKES_ON;
             }  else if (control_level_[joint_idx] == control_level_t::SPRING_ADJUST)
             {
-              // Spring adjust joint: proportional control based on analog input 2 potentiometer
+              // Spring adjust joint: PID controller based off of linear potentiometer feedback
               if (joint_idx == SPRING_ADJUST_JOINT_IDX) {
                 // For some reason we are reading the potentiometer on AnalogInput4, should be 2
-                double K_P = 1.0;
-                double K_D = 0.4;
-                double error = in_somanet_1_[joint_idx]->AnalogInput4 - threadsafe_commands_spring_adjust_[joint_idx];
-                std::chrono::steady_clock::time_point time_now = std::chrono::steady_clock::now();
-                std::chrono::duration<double> time_elapsed = time_now - spring_adjust_state_.time_prev_;
-                double error_dt = 0;
-                if (spring_adjust_state_.error_prev_) {
-                  error_dt = (error - *spring_adjust_state_.error_prev_) / time_elapsed.count();
-                }
-                spring_adjust_state_.error_prev_ = error;
-                spring_adjust_state_.time_prev_ = time_now;
-                double target_torque = - K_P * error - K_D * error_dt;
-                // A ceiling at X% of rated torque
-                // With a floor of Y% torque (below that, the motor doesn't move)
-                if (target_torque > 0)
-                {
-                  // Per mill of rated torque
-                  target_torque = std::clamp(target_torque, 0.0, 2500.0);
-                }
-                else
-                {
-                  target_torque = std::clamp(target_torque, -2500.0, 0.0);
-                }
-                // Don't allow control mode to change until the target position is reached and is stable
-                if (std::abs(error) < 200 && error_dt == 0) {
-                  std::cout << "Position reached, potentiometer at: " << in_somanet_1_[joint_idx]->AnalogInput4 << std::endl;
-                  spring_adjust_state_.allow_mode_change_ = true;
-                  target_torque = 0;
-                }
-                else {
-                  spring_adjust_state_.allow_mode_change_ = false;
-                }
+                double linear_pos = in_somanet_1_[joint_idx]->AnalogInput4;
+                std::cout << "Linear pos: " << linear_pos << std::endl;
 
-                // Ensure a valid command
-                if (std::isnan(threadsafe_commands_spring_adjust_[joint_idx])) {
+                // Check validity of desired position command
+                double desired_pos = threadsafe_commands_spring_adjust_[joint_idx];
+                if (std::isnan(desired_pos) || desired_pos < MIN_SPRING_POTENTIOMETER_TICKS || desired_pos > MAX_SPRING_POTENTIOMETER_TICKS){
                   out_somanet_1_[joint_idx]->TargetTorque = 0;
                   out_somanet_1_[joint_idx]->OpMode = PROFILE_TORQUE_MODE;
                   out_somanet_1_[joint_idx]->TorqueOffset = 0;
                   out_somanet_1_[joint_idx]->Controlword = NORMAL_OPERATION_BRAKES_OFF;
                   continue;
                 }
+                
+                // If command is valid, initialize variables and skip rest of loop
+                double error = desired_pos - linear_pos;
+                if (spring_adjust_state_.first_loop_) {
+                  spring_adjust_state_.first_loop_ = false;
+                  spring_adjust_state_.error_prev_ = error;
+                  spring_adjust_state_.error_sum_ = 0.0;
+                  spring_adjust_state_.time_prev_ = std::chrono::steady_clock::now();
+                  continue;
+                }
+                
+                // PID controller logic
+                std::chrono::steady_clock::time_point time_now = std::chrono::steady_clock::now();
+                double time_elapsed = (time_now - spring_adjust_state_.time_prev_).count();
+                double error_dt = (error - spring_adjust_state_.error_prev_) / time_elapsed;
+                spring_adjust_state_.error_sum_ += spring_adjust_state_.error_prev_ * time_elapsed;
+                spring_adjust_state_.error_sum_ = std::clamp(spring_adjust_state_.error_sum_, -spring_adjust_state_.integral_clamp_, spring_adjust_state_.integral_clamp_);
+                spring_adjust_state_.error_prev_ = error;
+                spring_adjust_state_.time_prev_ = time_now;
+                double target_torque = spring_adjust_state_.kp_ * error + spring_adjust_state_.ki_ * spring_adjust_state_.error_sum_ + spring_adjust_state_.kd_ * error_dt;
+                target_torque = std::clamp(target_torque, -spring_adjust_state_.torque_clamp_, spring_adjust_state_.torque_clamp_);
+                
+                // Don't allow control mode to change until the target position is reached and is stable
+                if (std::abs(error) < 200 && error_dt == 0) {
+                  std::cout << "Target reached!" << std::endl;
+                  spring_adjust_state_.allow_mode_change_ = true;
+                  target_torque = 0;
+                  continue;
+                }
+                else {
+                  spring_adjust_state_.allow_mode_change_ = false;
+                }
 
+                // Send valid torque command
                 out_somanet_1_[joint_idx]->TargetTorque = target_torque;
                 out_somanet_1_[joint_idx]->OpMode = PROFILE_TORQUE_MODE;
                 out_somanet_1_[joint_idx]->TorqueOffset = 0;
