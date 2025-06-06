@@ -49,7 +49,6 @@ int32_t read_sdo_value(uint16_t slave_idx, uint16_t index, uint8_t subindex) {
     int object_size = sizeof(value_holder);
     int timeout = EC_TIMEOUTRXM;
     ec_SDOread(slave_idx, index, subindex, FALSE, &object_size, &value_holder, timeout);
-    printf("The value of the object is %" PRId32 "\n", value_holder);
     return value_holder;
 }
 } // namespace
@@ -672,7 +671,6 @@ void SynapticonSystemInterface::somanetCyclicLoop(
                 }
                 // Don't allow control mode to change until the target position is reached and is stable
                 if (std::abs(error) < 200 && error_dt == 0) {
-                  RCLCPP_INFO(getLogger(), "Position reached, potentiometer at: %" PRId32, spring_pot_position);
                   spring_adjust_state_.allow_mode_change_ = true;
                   target_torque = 0;
                 }
