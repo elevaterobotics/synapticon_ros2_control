@@ -708,6 +708,25 @@ void SynapticonSystemInterface::somanetCyclicLoop(
           }
         }
 
+
+
+        uint16_t slaveNumber = 3; //The slave you want to read from/write to. 1 means the first slave
+        uint16_t index = 0x2402; //The index of the object you want to operate. Check object dictionary for more details. 0x2006 is Protection.
+        uint8_t subindex = 0x00; //The subindex of the object you want to operate. 0x2006:2 is Overvoltage setpoint. By default it is 1000V and has no effect. If it is used, please use another object instead.
+        boolean operateAllSubindexes = FALSE; //Specify if you want to write to/read from all subindexes within the specified index.
+        int32_t objectValueHolder; //The place to store the value read from the object, or the value that you are about to write to the object. Make sure to change data type when you change index/subindex.
+        int objectSize; //Bit size of the object that you are going to operate.
+        objectSize = sizeof(objectValueHolder); //Use sizeof() to directly get bit size of the object. 
+        int timeout = EC_TIMEOUTRXM; //Timeout of the function in us. By default it is the macro EC_TIMEOUTRXM defined at the top of this file.
+        ec_SDOread(slaveNumber, index, subindex, operateAllSubindexes, &objectSize, &objectValueHolder, timeout); //Read and print value from index:subindex.
+        printf("The value of the object is %" PRId32 "\n", objectValueHolder);
+        int32_t temp = objectValueHolder; //Save the old value for future reset.
+
+
+
+
+
+        // std::cout << in_somanet_1_[SPRING_ADJUST_JOINT_IDX]->AnalogInput4 << std::endl;
         // printf("Processdata cycle %4d , WKC %d ,", i, wkc);
         // printf(" Statusword: %X ,", in_somanet_1->Statusword);
         // printf(" Op Mode Display: %d ,", in_somanet_1->OpModeDisplay);
