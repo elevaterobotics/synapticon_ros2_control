@@ -43,6 +43,15 @@ constexpr double TORQUE_FRICTION_OFFSET = 20; // per mill
 constexpr size_t SPRING_ADJUST_JOINT_IDX = 2;
 constexpr double MAX_SPRING_POTENTIOMETER_TICKS = 63900;
 constexpr double MIN_SPRING_POTENTIOMETER_TICKS = 1332;
+
+int32_t read_sdo_value(uint16_t slave_idx, uint16_t index, uint8_t subindex) {
+    int32_t value_holder;
+    int object_size = sizeof(value_holder);
+    int timeout = EC_TIMEOUTRXM;
+    ec_SDOread(slave_idx, index, subindex, FALSE, &object_size, &value_holder, timeout);
+    printf("The value of the object is %" PRId32 "\n", value_holder);
+    return value_holder;
+}
 } // namespace
 
 hardware_interface::CallbackReturn SynapticonSystemInterface::on_init(
@@ -272,7 +281,8 @@ SynapticonSystemInterface::prepare_command_mode_switch(
           new_modes.push_back(control_level_t::SPRING_ADJUST);
           spring_adjust_state_.time_prev_ = std::chrono::steady_clock::now();
           spring_adjust_state_.error_prev_ = std::nullopt;
-          std::cerr << "Potentiometer at: " << in_somanet_1_[SPRING_ADJUST_JOINT_IDX]->AnalogInput4 << std::endl;
+          int32_t spring_pot_position = read_sdo_value(SPRING_ADJUST_JOINT_IDX + 1, 0x2402, 0x00);
+          std::cerr << "Potentiometer at: " << spring_pot_position << std::endl;
         } else {
           new_modes.push_back(control_level_t::QUICK_STOP);
         }
@@ -643,10 +653,13 @@ void SynapticonSystemInterface::somanetCyclicLoop(
             {
               // Spring adjust joint: proportional control based on analog input 2 potentiometer
               if (joint_idx == SPRING_ADJUST_JOINT_IDX) {
-                // For some reason we are reading the potentiometer on AnalogInput4, should be 2
+                // There is a Synapticon bug where AnalogInput2 is not reliable, so read from SDO
+                int32_t spring_pot_position = read_sdo_value(SPRING_ADJUST_JOINT_IDX + 1, 0x2402, 0x00);
+                printf("The value of the object is %" PRId32 "\n", spring_pot_position);
+
                 double K_P = 1.0;
                 double K_D = 0.4;
-                double error = in_somanet_1_[joint_idx]->AnalogInput4 - threadsafe_commands_spring_adjust_[joint_idx];
+                double error = spring_pot_position - threadsafe_commands_spring_adjust_[joint_idx];
                 std::chrono::steady_clock::time_point time_now = std::chrono::steady_clock::now();
                 std::chrono::duration<double> time_elapsed = time_now - spring_adjust_state_.time_prev_;
                 double error_dt = 0;
@@ -669,7 +682,7 @@ void SynapticonSystemInterface::somanetCyclicLoop(
                 }
                 // Don't allow control mode to change until the target position is reached and is stable
                 if (std::abs(error) < 200 && error_dt == 0) {
-                  std::cout << "Position reached, potentiometer at: " << in_somanet_1_[joint_idx]->AnalogInput4 << std::endl;
+                  std::cout << "Position reached, potentiometer at: " << spring_pot_position << std::endl;
                   spring_adjust_state_.allow_mode_change_ = true;
                   target_torque = 0;
                 }
@@ -708,25 +721,6 @@ void SynapticonSystemInterface::somanetCyclicLoop(
           }
         }
 
-
-
-        uint16_t slaveNumber = 3; //The slave you want to read from/write to. 1 means the first slave
-        uint16_t index = 0x2402; //The index of the object you want to operate. Check object dictionary for more details. 0x2006 is Protection.
-        uint8_t subindex = 0x00; //The subindex of the object you want to operate. 0x2006:2 is Overvoltage setpoint. By default it is 1000V and has no effect. If it is used, please use another object instead.
-        boolean operateAllSubindexes = FALSE; //Specify if you want to write to/read from all subindexes within the specified index.
-        int32_t objectValueHolder; //The place to store the value read from the object, or the value that you are about to write to the object. Make sure to change data type when you change index/subindex.
-        int objectSize; //Bit size of the object that you are going to operate.
-        objectSize = sizeof(objectValueHolder); //Use sizeof() to directly get bit size of the object. 
-        int timeout = EC_TIMEOUTRXM; //Timeout of the function in us. By default it is the macro EC_TIMEOUTRXM defined at the top of this file.
-        ec_SDOread(slaveNumber, index, subindex, operateAllSubindexes, &objectSize, &objectValueHolder, timeout); //Read and print value from index:subindex.
-        printf("The value of the object is %" PRId32 "\n", objectValueHolder);
-        int32_t temp = objectValueHolder; //Save the old value for future reset.
-
-
-
-
-
-        // std::cout << in_somanet_1_[SPRING_ADJUST_JOINT_IDX]->AnalogInput4 << std::endl;
         // printf("Processdata cycle %4d , WKC %d ,", i, wkc);
         // printf(" Statusword: %X ,", in_somanet_1->Statusword);
         // printf(" Op Mode Display: %d ,", in_somanet_1->OpModeDisplay);
