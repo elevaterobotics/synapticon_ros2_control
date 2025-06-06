@@ -651,7 +651,6 @@ void SynapticonSystemInterface::somanetCyclicLoop(
               if (joint_idx == SPRING_ADJUST_JOINT_IDX) {
                 // There is a Synapticon bug where AnalogInput2 is not reliable, so read from SDO
                 int32_t spring_pot_position = read_sdo_value(SPRING_ADJUST_JOINT_IDX + 1, 0x2402, 0x00);
-                printf("The value of the object is %" PRId32 "\n", spring_pot_position);
 
                 double K_P = 1.0;
                 double K_D = 0.4;
