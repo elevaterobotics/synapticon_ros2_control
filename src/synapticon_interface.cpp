@@ -765,7 +765,7 @@ bool SynapticonSystemInterface::eStopEngaged() {
   int result = ec_SDOread(slave_number, index, subindex, operate_all_subindices, &object_size, &value_holder, EC_TIMEOUTRXM);
 
   if (result <= 0) {
-    RCLCPP_FATAL(get_logger(), "Failed to read emergency stop status from slave %d", slave_number);
+    RCLCPP_FATAL(getLogger(), "Failed to read emergency stop status from slave %d", slave_number);
     // Force an e-stop
     return true;
   }
