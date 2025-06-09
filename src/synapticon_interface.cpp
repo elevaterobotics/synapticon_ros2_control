@@ -39,10 +39,12 @@ unsigned int NORMAL_OPERATION_BRAKES_OFF = 0b00001111;
 unsigned int NORMAL_OPERATION_BRAKES_ON = 0b00001011;
 constexpr char EXPECTED_SLAVE_NAME[] = "SOMANET";
 constexpr double TORQUE_FRICTION_OFFSET = 20; // per mill
-// TODO: this needs to be adjusted when more Synapticons are included in the chain
 constexpr size_t SPRING_ADJUST_JOINT_IDX = 2;
-constexpr double MAX_SPRING_POTENTIOMETER_TICKS = 63900;
-constexpr double MIN_SPRING_POTENTIOMETER_TICKS = 1332;
+// Minimum spring position: no wrist attached
+constexpr double MIN_SPRING_POTENTIOMETER_TICKS = 5000;
+// Maximum spring position: max payload
+constexpr double MAX_SPRING_POTENTIOMETER_TICKS = 34000;
+constexpr double NO_PAYLOAD_SPRING_POSITION = 5000;
 
 int32_t read_sdo_value(uint16_t slave_idx, uint16_t index, uint8_t subindex) {
     int32_t value_holder;
@@ -50,6 +52,49 @@ int32_t read_sdo_value(uint16_t slave_idx, uint16_t index, uint8_t subindex) {
     int timeout = EC_TIMEOUTRXM;
     ec_SDOread(slave_idx, index, subindex, FALSE, &object_size, &value_holder, timeout);
     return value_holder;
+}
+
+double spring_adjust_torque_pd(
+  double target_position,
+  SpringAdjustState& state,
+  bool& allow_mode_change) {
+
+  // There is a Synapticon bug where AnalogInput2 is not reliable, so read from SDO
+  int32_t spring_pot_position = read_sdo_value(SPRING_ADJUST_JOINT_IDX + 1, 0x2402, 0x00);
+
+  double K_P = 1.0;
+  double K_D = 0.4;
+  double error = spring_pot_position - target_position;
+  std::chrono::steady_clock::time_point time_now = std::chrono::steady_clock::now();
+  std::chrono::duration<double> time_elapsed = time_now - state.time_prev_;
+  double error_dt = 0;
+  if (state.error_prev_) {
+      error_dt = (error - *state.error_prev_) / time_elapsed.count();
+  }
+  state.error_prev_ = error;
+  state.time_prev_ = time_now;
+  double actuator_torque = - K_P * error - K_D * error_dt;
+
+  // A ceiling at X% of rated torque
+  // With a floor of Y% torque (below that, the motor doesn't move)
+  // We overdrive the motor, higher than rated torque, since it's a quick motion
+  if (actuator_torque > 0) {
+      // Per mill of rated torque
+      actuator_torque = std::clamp(actuator_torque, 0.0, 2500.0);
+  } else {
+      actuator_torque = std::clamp(actuator_torque, -2500.0, 0.0);
+  }
+
+  // Don't allow control mode to change until the target position is reached and is stable
+  if (std::abs(error) < 200 && error_dt <= 1) {
+      allow_mode_change = true;
+      // We can safelyset the target torque to zero b/c this actuator is not backdrivable
+      actuator_torque = 0;
+  } else {
+      allow_mode_change = false;
+  }
+
+  return actuator_torque;
 }
 } // namespace
 
@@ -81,6 +126,8 @@ hardware_interface::CallbackReturn SynapticonSystemInterface::on_init(
                               std::numeric_limits<double>::quiet_NaN());
   hw_commands_spring_adjust_.resize(num_joints_,
                               std::numeric_limits<double>::quiet_NaN());
+  hw_commands_compensate_for_removed_load_.resize(num_joints_,
+                              std::numeric_limits<double>::quiet_NaN());
   control_level_.resize(num_joints_, control_level_t::UNDEFINED);
   // Atomic deques are difficult to initialize
   threadsafe_commands_efforts_.resize(num_joints_);
@@ -109,16 +156,20 @@ hardware_interface::CallbackReturn SynapticonSystemInterface::on_init(
               "quick_stop" ||
           joint.command_interfaces[0].name ==
               "spring_adjust" ||
+          joint.command_interfaces[0].name ==
+              "compensate_for_removed_load" ||
+          joint.command_interfaces[0].name ==
               hardware_interface::HW_IF_EFFORT)) {
       RCLCPP_FATAL(
           getLogger(),
-          "Joint '%s' has %s command interface. Expected %s, %s, %s, %s, or %s.",
+          "Joint '%s' has %s command interface. Expected %s, %s, %s, %s, %s, or %s.",
           joint.name.c_str(), joint.command_interfaces[0].name.c_str(),
           hardware_interface::HW_IF_POSITION,
           hardware_interface::HW_IF_VELOCITY,
+          hardware_interface::HW_IF_EFFORT,
           "quick_stop",
           "spring_adjust",
-          hardware_interface::HW_IF_EFFORT);
+          "compensate_for_removed_load");
       return hardware_interface::CallbackReturn::ERROR;
     }
 
@@ -252,7 +303,7 @@ hardware_interface::return_type
 SynapticonSystemInterface::prepare_command_mode_switch(
     const std::vector<std::string> &start_interfaces,
     const std::vector<std::string> &stop_interfaces) {
-  if (!spring_adjust_state_.allow_mode_change_)
+  if (!allow_mode_change_)
   {
     RCLCPP_ERROR(getLogger(), "A control mode change is disallowed at this moment.");
     return hardware_interface::return_type::ERROR;
@@ -284,6 +335,13 @@ SynapticonSystemInterface::prepare_command_mode_switch(
         } else {
           new_modes.push_back(control_level_t::QUICK_STOP);
         }
+      } else if (key == info_.joints[i].name + "/compensate_for_removed_load") {
+        // compensate_for_removed_load puts all joints in QUICK_STOP mode except the spring adjust joint
+        if (i == SPRING_ADJUST_JOINT_IDX) {
+          new_modes.push_back(control_level_t::COMPENSATE_FOR_REMOVED_LOAD);
+        } else {
+          new_modes.push_back(control_level_t::QUICK_STOP);
+        }
       }
     }
   }
@@ -296,6 +354,7 @@ SynapticonSystemInterface::prepare_command_mode_switch(
         hw_commands_velocities_[i] = 0;
         hw_commands_efforts_[i] = 0;
         hw_commands_spring_adjust_[i] = std::numeric_limits<double>::quiet_NaN();
+        hw_commands_compensate_for_removed_load_[i] = std::numeric_limits<double>::quiet_NaN();
         threadsafe_commands_efforts_[i] =
             std::numeric_limits<double>::quiet_NaN();
         threadsafe_commands_velocities_[i] = 0;
@@ -344,6 +403,7 @@ hardware_interface::CallbackReturn SynapticonSystemInterface::on_activate(
     hw_commands_velocities_[i] = 0;
     hw_commands_efforts_[i] = 0;
     hw_commands_spring_adjust_[i] = std::numeric_limits<double>::quiet_NaN();
+    hw_commands_compensate_for_removed_load_[i] = std::numeric_limits<double>::quiet_NaN();
     threadsafe_commands_efforts_[i] = std::numeric_limits<double>::quiet_NaN();
     threadsafe_commands_velocities_[i] = 0;
     threadsafe_commands_positions_[i] =
@@ -365,6 +425,7 @@ hardware_interface::CallbackReturn SynapticonSystemInterface::on_deactivate(
     hw_commands_velocities_[i] = 0;
     hw_commands_efforts_[i] = 0;
     hw_commands_spring_adjust_[i] = std::numeric_limits<double>::quiet_NaN();
+    hw_commands_compensate_for_removed_load_[i] = std::numeric_limits<double>::quiet_NaN();
     threadsafe_commands_efforts_[i] = std::numeric_limits<double>::quiet_NaN();
     threadsafe_commands_velocities_[i] = 0;
     threadsafe_commands_positions_[i] =
@@ -419,6 +480,10 @@ SynapticonSystemInterface::write(const rclcpp::Time & /*time*/,
       hw_commands_spring_adjust_[i] = std::clamp(hw_commands_spring_adjust_[i], MIN_SPRING_POTENTIOMETER_TICKS, MAX_SPRING_POTENTIOMETER_TICKS);
       threadsafe_commands_spring_adjust_[i] = hw_commands_spring_adjust_[i];
     }
+    if (!std::isnan(hw_commands_compensate_for_removed_load_[i]))
+    {
+      // No need to do anything here, the spring adjust joint moves to a hard-coded position
+    }
   }
 
   return hardware_interface::return_type::OK;
@@ -463,6 +528,9 @@ SynapticonSystemInterface::export_command_interfaces() {
     command_interfaces.emplace_back(hardware_interface::CommandInterface(
         info_.joints[i].name, "spring_adjust",
         &hw_commands_spring_adjust_[i]));
+    command_interfaces.emplace_back(hardware_interface::CommandInterface(
+        info_.joints[i].name, "compensate_for_removed_load",
+        &hw_commands_compensate_for_removed_load_[i]));
   }
   return command_interfaces;
 }
@@ -601,10 +669,14 @@ void SynapticonSystemInterface::somanetCyclicLoop(
           else if ((in_somanet_1_[joint_idx]->Statusword &
                     0b0000000001101111) == 0b0000000000100111) {
             in_normal_op_mode = true;
-            // Usually do nothing for the spring adjust joint
-            if (joint_idx == SPRING_ADJUST_JOINT_IDX && control_level_[joint_idx] != control_level_t::SPRING_ADJUST) {
+
+            // In most control modes, do nothing for the spring adjust joint
+            if (joint_idx == SPRING_ADJUST_JOINT_IDX
+                && control_level_[joint_idx] != control_level_t::SPRING_ADJUST
+                && control_level_[joint_idx] != control_level_t::COMPENSATE_FOR_REMOVED_LOAD) {
               continue;
             }
+
             if (control_level_[joint_idx] == control_level_t::EFFORT) {
               if (!std::isnan(threadsafe_commands_efforts_[joint_idx])) {
                 out_somanet_1_[joint_idx]->TargetTorque =
@@ -643,41 +715,6 @@ void SynapticonSystemInterface::somanetCyclicLoop(
             {
               // Spring adjust joint: proportional control based on analog input 2 potentiometer
               if (joint_idx == SPRING_ADJUST_JOINT_IDX) {
-                // There is a Synapticon bug where AnalogInput2 is not reliable, so read from SDO
-                int32_t spring_pot_position = read_sdo_value(SPRING_ADJUST_JOINT_IDX + 1, 0x2402, 0x00);
-
-                double K_P = 1.0;
-                double K_D = 0.4;
-                double error = spring_pot_position - threadsafe_commands_spring_adjust_[joint_idx];
-                std::chrono::steady_clock::time_point time_now = std::chrono::steady_clock::now();
-                std::chrono::duration<double> time_elapsed = time_now - spring_adjust_state_.time_prev_;
-                double error_dt = 0;
-                if (spring_adjust_state_.error_prev_) {
-                  error_dt = (error - *spring_adjust_state_.error_prev_) / time_elapsed.count();
-                }
-                spring_adjust_state_.error_prev_ = error;
-                spring_adjust_state_.time_prev_ = time_now;
-                double target_torque = - K_P * error - K_D * error_dt;
-                // A ceiling at X% of rated torque
-                // With a floor of Y% torque (below that, the motor doesn't move)
-                if (target_torque > 0)
-                {
-                  // Per mill of rated torque
-                  target_torque = std::clamp(target_torque, 0.0, 2500.0);
-                }
-                else
-                {
-                  target_torque = std::clamp(target_torque, -2500.0, 0.0);
-                }
-                // Don't allow control mode to change until the target position is reached and is stable
-                if (std::abs(error) < 200 && error_dt == 0) {
-                  spring_adjust_state_.allow_mode_change_ = true;
-                  target_torque = 0;
-                }
-                else {
-                  spring_adjust_state_.allow_mode_change_ = false;
-                }
-
                 // Ensure a valid command
                 if (std::isnan(threadsafe_commands_spring_adjust_[joint_idx])) {
                   out_somanet_1_[joint_idx]->TargetTorque = 0;
@@ -687,7 +724,40 @@ void SynapticonSystemInterface::somanetCyclicLoop(
                   continue;
                 }
 
-                out_somanet_1_[joint_idx]->TargetTorque = target_torque;
+                // Create a local boolean variable since atomics can't be passed by reference
+                bool allow_mode_change = allow_mode_change_.load();
+                double actuator_torque = spring_adjust_torque_pd(
+                  threadsafe_commands_spring_adjust_[joint_idx],
+                  spring_adjust_state_,
+                  allow_mode_change  // Pass the local variable instead of the atomic member
+                );
+                // Update the atomic member with the new value
+                allow_mode_change_.store(allow_mode_change);
+
+                out_somanet_1_[joint_idx]->TargetTorque = actuator_torque;
+                out_somanet_1_[joint_idx]->OpMode = PROFILE_TORQUE_MODE;
+                out_somanet_1_[joint_idx]->TorqueOffset = 0;
+                out_somanet_1_[joint_idx]->Controlword = NORMAL_OPERATION_BRAKES_OFF;
+              }
+              else {
+                RCLCPP_ERROR(getLogger(), "Should never get here since the other joints are in QUICK_STOP mode");
+              }
+            } else if (control_level_[joint_idx] == control_level_t::COMPENSATE_FOR_REMOVED_LOAD)
+            {
+              // Spring adjust joint: proportional control based on analog input 2 potentiometer
+              if (joint_idx == SPRING_ADJUST_JOINT_IDX) {
+
+                // Create a local boolean variable since atomics can't be passed by reference
+                bool allow_mode_change = allow_mode_change_.load();
+                double actuator_torque = spring_adjust_torque_pd(
+                  NO_PAYLOAD_SPRING_POSITION,
+                  spring_adjust_state_,
+                  allow_mode_change  // Pass the local variable instead of the atomic member
+                );
+                // Update the atomic member with the new value
+                allow_mode_change_.store(allow_mode_change);
+
+                out_somanet_1_[joint_idx]->TargetTorque = actuator_torque;
                 out_somanet_1_[joint_idx]->OpMode = PROFILE_TORQUE_MODE;
                 out_somanet_1_[joint_idx]->TorqueOffset = 0;
                 out_somanet_1_[joint_idx]->Controlword = NORMAL_OPERATION_BRAKES_OFF;
