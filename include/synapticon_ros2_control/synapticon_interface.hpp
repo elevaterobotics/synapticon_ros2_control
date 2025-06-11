@@ -174,8 +174,9 @@ private:
   std::vector<double> hw_commands_quick_stop_;
   // hw_commands_spring_adjust_ is potentiometer ticks.
   std::vector<double> hw_commands_spring_adjust_;
-  // hw_commands_compensate_for_load_ is never actually used, just a placeholder for compilation
+  // hw_commands_compensate_for_added/removed_load_ is never actually used, just a placeholder for compilation
   std::vector<double> hw_commands_compensate_for_removed_load_;
+  std::vector<double> hw_commands_compensate_for_added_load_;
   std::vector<double> hw_states_positions_;
   std::vector<double> hw_states_velocities_;
   std::vector<double> hw_states_accelerations_;
@@ -197,6 +198,8 @@ private:
     SPRING_ADJUST = 5,
     // If a load was just removed, use this control mode
     COMPENSATE_FOR_REMOVED_LOAD = 6,
+    // If a load was just added, use this control mode
+    COMPENSATE_FOR_ADDED_LOAD = 7,
   };
 
   // Active control mode for each actuator
@@ -206,14 +209,14 @@ private:
   OSAL_THREAD_HANDLE ecat_error_thread_;
   char io_map_[4096];
 
-  std::vector<InSomanet50t *> in_somanet_1_;
-  std::mutex in_somanet_mtx_;
-  std::vector<OutSomanet50t *> out_somanet_1_;
+  std::vector<InSomanet50t *> in_somanet_;
+  std::mutex somanet_mtx_;
+  std::vector<OutSomanet50t *> out_somanet_;
 
   std::vector<uint32_t> encoder_resolutions_;
 
   // For coordination between threads
-  volatile std::atomic<int> wkc_;
+  std::atomic<int> wkc_;
   std::atomic<int> expected_wkc_;
   std::atomic<bool> needlf_ = false;
   std::atomic<bool> in_normal_op_mode_ = false;

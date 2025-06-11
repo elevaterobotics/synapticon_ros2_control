@@ -40,11 +40,13 @@ unsigned int NORMAL_OPERATION_BRAKES_ON = 0b00001011;
 constexpr char EXPECTED_SLAVE_NAME[] = "SOMANET";
 constexpr double TORQUE_FRICTION_OFFSET = 20; // per mill
 constexpr size_t SPRING_ADJUST_JOINT_IDX = 2;
+constexpr size_t INERTIAL_ACTUATOR_JOINT_IDX = 3;
 // Minimum spring position: no wrist attached
 constexpr double MIN_SPRING_POTENTIOMETER_TICKS = 5000;
 // Maximum spring position: max payload
 constexpr double MAX_SPRING_POTENTIOMETER_TICKS = 34000;
 constexpr double SPRING_POSITION_WITHOUT_PAYLOAD = 5000;
+constexpr double INERTIAL_HARD_STOP_POSITION = -1.082;  // rad
 
 int32_t read_sdo_value(uint16_t slave_idx, uint16_t index, uint8_t subindex) {
     int32_t value_holder;
@@ -127,6 +129,8 @@ hardware_interface::CallbackReturn SynapticonSystemInterface::on_init(
                               std::numeric_limits<double>::quiet_NaN());
   hw_commands_compensate_for_removed_load_.resize(num_joints_,
                               std::numeric_limits<double>::quiet_NaN());
+  hw_commands_compensate_for_added_load_.resize(num_joints_,
+                              std::numeric_limits<double>::quiet_NaN());
   control_level_.resize(num_joints_, control_level_t::UNDEFINED);
   // Atomic deques are difficult to initialize
   threadsafe_commands_efforts_.resize(num_joints_);
@@ -146,6 +150,8 @@ hardware_interface::CallbackReturn SynapticonSystemInterface::on_init(
     spring_adjust.store(std::numeric_limits<double>::quiet_NaN());
   }
 
+  std::cerr << "Checking interface names" << std::endl;
+
   for (const hardware_interface::ComponentInfo &joint : info_.joints) {
     if (!(joint.command_interfaces[0].name ==
               hardware_interface::HW_IF_POSITION ||
@@ -155,16 +161,19 @@ hardware_interface::CallbackReturn SynapticonSystemInterface::on_init(
               hardware_interface::HW_IF_EFFORT ||
           joint.command_interfaces[0].name == "quick_stop" ||
           joint.command_interfaces[0].name == "spring_adjust" ||
-          joint.command_interfaces[0].name == "compensate_for_removed_load" )) {
+          joint.command_interfaces[0].name == "compensate_for_removed_load" ||
+          joint.command_interfaces[0].name == "compensate_for_added_load")) {
       RCLCPP_FATAL(
           getLogger(),
-          "Joint '%s' has %s command interface. Expected %s, %s, %s, %s, or %s.",
+          "Joint '%s' has %s command interface. Expected %s, %s, %s, %s, %s, %s, or %s.",
           joint.name.c_str(), joint.command_interfaces[0].name.c_str(),
           hardware_interface::HW_IF_POSITION,
           hardware_interface::HW_IF_VELOCITY,
+          hardware_interface::HW_IF_EFFORT,
           "quick_stop",
           "spring_adjust",
-          hardware_interface::HW_IF_EFFORT);
+          "compensate_for_removed_load",
+          "compensate_for_added_load");
       return hardware_interface::CallbackReturn::ERROR;
     }
 
@@ -187,6 +196,8 @@ hardware_interface::CallbackReturn SynapticonSystemInterface::on_init(
     }
   }
 
+  std::cerr << "Done checking interface names, checking mechanical reductions" << std::endl;
+
   for (size_t i = 0; i < num_joints_; ++i)
   {
     std::string reduction_param_name = info_.joints.at(i).name + "_mechanical_reduction";
@@ -197,6 +208,8 @@ hardware_interface::CallbackReturn SynapticonSystemInterface::on_init(
     }
     mechanical_reductions_.at(i) = stod(info_.hardware_parameters[reduction_param_name]);
   }
+
+  std::cerr << "Done checking interface names, setting up ethercat" << std::endl;
 
   // A thread to handle ethercat errors
   osal_thread_create(&ecat_error_thread_, 128000,
@@ -221,6 +234,8 @@ hardware_interface::CallbackReturn SynapticonSystemInterface::on_init(
     return hardware_interface::CallbackReturn::ERROR;
   }
 
+  std::cerr << "Done initializing ethercat, configuring ethercat" << std::endl;
+
   ec_config_map(&io_map_);
   ec_configdc();
   ec_statecheck(0, EC_STATE_SAFE_OP, EC_TIMEOUTSTATE * 4);
@@ -236,6 +251,8 @@ hardware_interface::CallbackReturn SynapticonSystemInterface::on_init(
   ec_writestate(0);
   size_t chk = 200;
 
+  std::cerr << "Done configuring ethercat, waiting for all slaves to reach OP state" << std::endl;
+
   // wait for all slaves to reach OP state
   do {
     ec_send_processdata();
@@ -249,10 +266,12 @@ hardware_interface::CallbackReturn SynapticonSystemInterface::on_init(
     return hardware_interface::CallbackReturn::ERROR;
   }
 
+  std::cerr << "Done waiting for all slaves to reach OP state, connecting struct pointers to I/O" << std::endl;
+
   // Connect struct pointers to I/O
   for (size_t joint_idx = 1; joint_idx < (num_joints_ + 1); ++joint_idx) {
-    in_somanet_1_.push_back((InSomanet50t *)ec_slave[joint_idx].inputs);
-    out_somanet_1_.push_back((OutSomanet50t *)ec_slave[joint_idx].outputs);
+    in_somanet_.push_back((InSomanet50t *)ec_slave[joint_idx].inputs);
+    out_somanet_.push_back((OutSomanet50t *)ec_slave[joint_idx].outputs);
   }
 
   // Read encoder resolution for each joint
@@ -286,11 +305,18 @@ hardware_interface::CallbackReturn SynapticonSystemInterface::on_init(
     }
   }
 
+  std::cerr << "Done reading encoder resolutions, starting the control loop" << std::endl;
+
   // Start the control loop, wait for it to reach normal operation mode
   somanet_control_thread_ =
       std::thread(&SynapticonSystemInterface::somanetCyclicLoop, this,
                   std::ref(in_normal_op_mode_));
 
+  std::cerr << "Done with on_init" << std::endl;
+  std::cerr << "Done with on_init" << std::endl;
+  std::cerr << "Done with on_init" << std::endl;
+  std::cerr << "Done with on_init" << std::endl;
+  std::cerr << "Done with on_init" << std::endl;
   return hardware_interface::CallbackReturn::SUCCESS;
 }
 
@@ -332,6 +358,32 @@ SynapticonSystemInterface::prepare_command_mode_switch(
         // compensate_for_removed_load puts all joints in QUICK_STOP mode except the spring adjust joint
         if (i == SPRING_ADJUST_JOINT_IDX) {
           new_modes.push_back(control_level_t::COMPENSATE_FOR_REMOVED_LOAD);
+        } else {
+          new_modes.push_back(control_level_t::QUICK_STOP);
+        }
+      } else if (key == info_.joints[i].name + "/compensate_for_added_load") {
+
+        // We disallow this command mode switch for several reasons
+        double inertial_actuator_position;
+        {
+            std::lock_guard<std::mutex> lock(somanet_mtx_);
+            inertial_actuator_position = hw_states_positions_[INERTIAL_ACTUATOR_JOINT_IDX];
+        }
+        if (abs(inertial_actuator_position - INERTIAL_HARD_STOP_POSITION) < 0.02 /* rad */)
+        {
+          RCLCPP_ERROR(getLogger(), "Payload compensation cannot occur unless the elevation inertial actuator is near the hard stop");
+          return hardware_interface::return_type::ERROR;
+        }
+        // Prior to this command switch, the spring adjust actuator should be set to SPRING_POSITION_WITHOUT_PAYLOAD
+        if (abs(hw_states_positions_[SPRING_ADJUST_JOINT_IDX] - SPRING_POSITION_WITHOUT_PAYLOAD) > 200 /* linear encoder ticks */)
+        {
+          RCLCPP_ERROR(getLogger(), "The spring adjust actuator should be near SPRING_POSITION_WITHOUT_PAYLOAD prior to adding a load");
+          return hardware_interface::return_type::ERROR;
+        }
+
+        // compensate_for_added_load puts all joints in QUICK_STOP mode except the spring adjust joint and the inertial actuator joint
+        if ((i == SPRING_ADJUST_JOINT_IDX) || (i == INERTIAL_ACTUATOR_JOINT_IDX)) {
+          new_modes.push_back(control_level_t::COMPENSATE_FOR_ADDED_LOAD);
         } else {
           new_modes.push_back(control_level_t::QUICK_STOP);
         }
@@ -396,6 +448,7 @@ hardware_interface::CallbackReturn SynapticonSystemInterface::on_activate(
     hw_commands_efforts_[i] = 0;
     hw_commands_spring_adjust_[i] = std::numeric_limits<double>::quiet_NaN();
     hw_commands_compensate_for_removed_load_[i] = std::numeric_limits<double>::quiet_NaN();
+    hw_commands_compensate_for_added_load_[i] = std::numeric_limits<double>::quiet_NaN();
     threadsafe_commands_efforts_[i] = std::numeric_limits<double>::quiet_NaN();
     threadsafe_commands_velocities_[i] = 0;
     threadsafe_commands_positions_[i] =
@@ -418,6 +471,7 @@ hardware_interface::CallbackReturn SynapticonSystemInterface::on_deactivate(
     hw_commands_efforts_[i] = 0;
     hw_commands_spring_adjust_[i] = std::numeric_limits<double>::quiet_NaN();
     hw_commands_compensate_for_removed_load_[i] = std::numeric_limits<double>::quiet_NaN();
+    hw_commands_compensate_for_added_load_[i] = std::numeric_limits<double>::quiet_NaN();
     threadsafe_commands_efforts_[i] = std::numeric_limits<double>::quiet_NaN();
     threadsafe_commands_velocities_[i] = 0;
     threadsafe_commands_positions_[i] =
@@ -432,13 +486,13 @@ hardware_interface::CallbackReturn SynapticonSystemInterface::on_deactivate(
 hardware_interface::return_type
 SynapticonSystemInterface::read(const rclcpp::Time & /*time*/,
                                 const rclcpp::Duration & /*period*/) {
-  std::lock_guard<std::mutex> lock(in_somanet_mtx_);
+  std::lock_guard<std::mutex> lock(somanet_mtx_);
   for (std::size_t i = 0; i < num_joints_; i++) {
     // InSomanet50t doesn't include acceleration
     hw_states_accelerations_[i] = 0;
-    hw_states_velocities_[i] = (1 / mechanical_reductions_.at(i)) * in_somanet_1_[i]->VelocityValue * RPM_TO_RAD_PER_S;
-    hw_states_positions_[i] = (1 / mechanical_reductions_.at(i)) * in_somanet_1_[i]->PositionValue * 2 * 3.14159 / encoder_resolutions_[i];
-    hw_states_efforts_[i] = mechanical_reductions_.at(i) * in_somanet_1_[i]->TorqueValue;
+    hw_states_velocities_[i] = (1 / mechanical_reductions_.at(i)) * in_somanet_[i]->VelocityValue * RPM_TO_RAD_PER_S;
+    hw_states_positions_[i] = (1 / mechanical_reductions_.at(i)) * in_somanet_[i]->PositionValue * 2 * 3.14159 / encoder_resolutions_[i];
+    hw_states_efforts_[i] = mechanical_reductions_.at(i) * in_somanet_[i]->TorqueValue;
   }
 
   return hardware_interface::return_type::OK;
@@ -472,7 +526,7 @@ SynapticonSystemInterface::write(const rclcpp::Time & /*time*/,
       hw_commands_spring_adjust_[i] = std::clamp(hw_commands_spring_adjust_[i], MIN_SPRING_POTENTIOMETER_TICKS, MAX_SPRING_POTENTIOMETER_TICKS);
       threadsafe_commands_spring_adjust_[i] = hw_commands_spring_adjust_[i];
     }
-    // No need to do anything for compensate_for_removed_load, the spring adjust joint moves to a hard-coded position
+    // No need to do anything for compensate_for_added/removed_load, the spring adjust joint moves to a hard-coded position
   }
 
   return hardware_interface::return_type::OK;
@@ -520,6 +574,9 @@ SynapticonSystemInterface::export_command_interfaces() {
     command_interfaces.emplace_back(hardware_interface::CommandInterface(
         info_.joints[i].name, "compensate_for_removed_load",
         &hw_commands_compensate_for_removed_load_[i]));
+    command_interfaces.emplace_back(hardware_interface::CommandInterface(
+        info_.joints[i].name, "compensate_for_added_load",
+        &hw_commands_compensate_for_added_load_[i]));
   }
   return command_interfaces;
 }
@@ -608,7 +665,7 @@ void SynapticonSystemInterface::somanetCyclicLoop(
   while (rclcpp::ok() && !eStopEngaged()) {
 
     {
-      std::lock_guard<std::mutex> lock(in_somanet_mtx_);
+      std::lock_guard<std::mutex> lock(somanet_mtx_);
       ec_send_processdata();
       wkc_ = ec_receive_processdata(EC_TIMEOUTRET);
 
@@ -616,46 +673,46 @@ void SynapticonSystemInterface::somanetCyclicLoop(
         for (size_t joint_idx = 0; joint_idx < num_joints_; ++joint_idx) {
           if (first_iteration.at(joint_idx)) {
             // Default to PROFILE_TORQUE_MODE
-            out_somanet_1_[joint_idx]->OpMode = PROFILE_TORQUE_MODE;
+            out_somanet_[joint_idx]->OpMode = PROFILE_TORQUE_MODE;
             // small offset to account for friction
-            if (in_somanet_1_[joint_idx]->VelocityValue > 0) {
-              out_somanet_1_[joint_idx]->TorqueOffset = TORQUE_FRICTION_OFFSET;
+            if (in_somanet_[joint_idx]->VelocityValue > 0) {
+              out_somanet_[joint_idx]->TorqueOffset = TORQUE_FRICTION_OFFSET;
             } else {
-              out_somanet_1_[joint_idx]->TorqueOffset = -TORQUE_FRICTION_OFFSET;
+              out_somanet_[joint_idx]->TorqueOffset = -TORQUE_FRICTION_OFFSET;
             }
-            out_somanet_1_[joint_idx]->TargetTorque = 0;
+            out_somanet_[joint_idx]->TargetTorque = 0;
             first_iteration.at(joint_idx) = false;
           }
 
           // Fault reset: Fault -> Switch on disabled, if the drive is in fault
           // state
-          if ((in_somanet_1_[joint_idx]->Statusword & 0b0000000001001111) ==
+          if ((in_somanet_[joint_idx]->Statusword & 0b0000000001001111) ==
               0b0000000000001000)
-            out_somanet_1_[joint_idx]->Controlword = 0b10000000;
+            out_somanet_[joint_idx]->Controlword = 0b10000000;
 
           // Shutdown: Switch on disabled -> Ready to switch on
-          else if ((in_somanet_1_[joint_idx]->Statusword &
+          else if ((in_somanet_[joint_idx]->Statusword &
                     0b0000000001001111) == 0b0000000001000000)
           {
             // If the QUICK_STOP controller is on, don't leave this state
             if ((control_level_[joint_idx] != control_level_t::QUICK_STOP) &&
                (control_level_[joint_idx] != control_level_t::UNDEFINED))
             {
-              out_somanet_1_[joint_idx]->Controlword = 0b00000110;
+              out_somanet_[joint_idx]->Controlword = 0b00000110;
             }
           }
           // Switch on: Ready to switch on -> Switched on
-          else if ((in_somanet_1_[joint_idx]->Statusword &
+          else if ((in_somanet_[joint_idx]->Statusword &
                     0b0000000001101111) == 0b0000000000100001)
-            out_somanet_1_[joint_idx]->Controlword = 0b00000111;
+            out_somanet_[joint_idx]->Controlword = 0b00000111;
 
           // Enable operation: Switched on -> Operation enabled
-          else if ((in_somanet_1_[joint_idx]->Statusword &
+          else if ((in_somanet_[joint_idx]->Statusword &
                     0b0000000001101111) == 0b0000000000100011)
-            out_somanet_1_[joint_idx]->Controlword = NORMAL_OPERATION_BRAKES_OFF;
+            out_somanet_[joint_idx]->Controlword = NORMAL_OPERATION_BRAKES_OFF;
 
           // Normal operation
-          else if ((in_somanet_1_[joint_idx]->Statusword &
+          else if ((in_somanet_[joint_idx]->Statusword &
                     0b0000000001101111) == 0b0000000000100111) {
             in_normal_op_mode = true;
 
@@ -663,49 +720,49 @@ void SynapticonSystemInterface::somanetCyclicLoop(
 
             if (control_level_[joint_idx] == control_level_t::EFFORT) {
               if (!std::isnan(threadsafe_commands_efforts_[joint_idx])) {
-                out_somanet_1_[joint_idx]->TargetTorque =
+                out_somanet_[joint_idx]->TargetTorque =
                     threadsafe_commands_efforts_[joint_idx];
-                out_somanet_1_[joint_idx]->OpMode = PROFILE_TORQUE_MODE;
+                out_somanet_[joint_idx]->OpMode = PROFILE_TORQUE_MODE;
                 // small offset to account for friction
-                if (in_somanet_1_[joint_idx]->VelocityValue > 0) {
-                  out_somanet_1_[joint_idx]->TorqueOffset = TORQUE_FRICTION_OFFSET;
+                if (in_somanet_[joint_idx]->VelocityValue > 0) {
+                  out_somanet_[joint_idx]->TorqueOffset = TORQUE_FRICTION_OFFSET;
                 } else {
-                  out_somanet_1_[joint_idx]->TorqueOffset = -TORQUE_FRICTION_OFFSET;
+                  out_somanet_[joint_idx]->TorqueOffset = -TORQUE_FRICTION_OFFSET;
                 }
-                out_somanet_1_[joint_idx]->Controlword = NORMAL_OPERATION_BRAKES_OFF;
+                out_somanet_[joint_idx]->Controlword = NORMAL_OPERATION_BRAKES_OFF;
               }
             } else if (control_level_[joint_idx] == control_level_t::VELOCITY) {
               if (!std::isnan(threadsafe_commands_velocities_[joint_idx])) {
-                out_somanet_1_[joint_idx]->TargetVelocity =
+                out_somanet_[joint_idx]->TargetVelocity =
                     threadsafe_commands_velocities_[joint_idx];
-                out_somanet_1_[joint_idx]->OpMode = CYCLIC_VELOCITY_MODE;
-                out_somanet_1_[joint_idx]->VelocityOffset = 0;
-                out_somanet_1_[joint_idx]->Controlword = NORMAL_OPERATION_BRAKES_OFF;
+                out_somanet_[joint_idx]->OpMode = CYCLIC_VELOCITY_MODE;
+                out_somanet_[joint_idx]->VelocityOffset = 0;
+                out_somanet_[joint_idx]->Controlword = NORMAL_OPERATION_BRAKES_OFF;
               }
             } else if (control_level_[joint_idx] == control_level_t::POSITION) {
               if (!std::isnan(threadsafe_commands_positions_[joint_idx])) {
-                out_somanet_1_[joint_idx]->TargetPosition = threadsafe_commands_positions_[joint_idx];
-                out_somanet_1_[joint_idx]->OpMode = CYCLIC_POSITION_MODE;
-                out_somanet_1_[joint_idx]->VelocityOffset = 0;
-                out_somanet_1_[joint_idx]->Controlword = NORMAL_OPERATION_BRAKES_OFF;
+                out_somanet_[joint_idx]->TargetPosition = threadsafe_commands_positions_[joint_idx];
+                out_somanet_[joint_idx]->OpMode = CYCLIC_POSITION_MODE;
+                out_somanet_[joint_idx]->VelocityOffset = 0;
+                out_somanet_[joint_idx]->Controlword = NORMAL_OPERATION_BRAKES_OFF;
               }
             } else if (control_level_[joint_idx] == control_level_t::QUICK_STOP)
             {
               // Turn the brake on
-              out_somanet_1_[joint_idx]->OpMode = PROFILE_TORQUE_MODE;
-              out_somanet_1_[joint_idx]->TorqueOffset = 0;
-              out_somanet_1_[joint_idx]->Controlword = NORMAL_OPERATION_BRAKES_ON;
+              out_somanet_[joint_idx]->OpMode = PROFILE_TORQUE_MODE;
+              out_somanet_[joint_idx]->TorqueOffset = 0;
+              out_somanet_[joint_idx]->Controlword = NORMAL_OPERATION_BRAKES_ON;
             }  else if (control_level_[joint_idx] == control_level_t::SPRING_ADJUST)
             {
               // Spring adjust joint: proportional control based on analog input 2 potentiometer
               if (joint_idx == SPRING_ADJUST_JOINT_IDX) {
                 // Ensure a valid command
                 if (std::isnan(threadsafe_commands_spring_adjust_[joint_idx])) {
-                  out_somanet_1_[joint_idx]->TargetTorque = 0;
-                  out_somanet_1_[joint_idx]->OpMode = PROFILE_TORQUE_MODE;
-                  out_somanet_1_[joint_idx]->TorqueOffset = 0;
+                  out_somanet_[joint_idx]->TargetTorque = 0;
+                  out_somanet_[joint_idx]->OpMode = PROFILE_TORQUE_MODE;
+                  out_somanet_[joint_idx]->TorqueOffset = 0;
                   // This is safe since the joint is non-backdrivable
-                  out_somanet_1_[joint_idx]->Controlword = NORMAL_OPERATION_BRAKES_OFF;
+                  out_somanet_[joint_idx]->Controlword = NORMAL_OPERATION_BRAKES_OFF;
                   continue;
                 }
 
@@ -720,10 +777,10 @@ void SynapticonSystemInterface::somanetCyclicLoop(
                 // Update the atomic member with the new value
                 allow_mode_change_.store(allow_mode_change);
 
-                out_somanet_1_[joint_idx]->TargetTorque = actuator_torque;
-                out_somanet_1_[joint_idx]->OpMode = PROFILE_TORQUE_MODE;
-                out_somanet_1_[joint_idx]->TorqueOffset = 0;
-                out_somanet_1_[joint_idx]->Controlword = NORMAL_OPERATION_BRAKES_OFF;
+                out_somanet_[joint_idx]->TargetTorque = actuator_torque;
+                out_somanet_[joint_idx]->OpMode = PROFILE_TORQUE_MODE;
+                out_somanet_[joint_idx]->TorqueOffset = 0;
+                out_somanet_[joint_idx]->Controlword = NORMAL_OPERATION_BRAKES_OFF;
               }
               else {
                 RCLCPP_ERROR(getLogger(), "Should never get here since the other joints are in QUICK_STOP mode");
@@ -744,23 +801,63 @@ void SynapticonSystemInterface::somanetCyclicLoop(
                 // Update the atomic member with the new value
                 allow_mode_change_.store(allow_mode_change);
 
-                out_somanet_1_[joint_idx]->TargetTorque = actuator_torque;
-                out_somanet_1_[joint_idx]->OpMode = PROFILE_TORQUE_MODE;
-                out_somanet_1_[joint_idx]->TorqueOffset = 0;
-                out_somanet_1_[joint_idx]->Controlword = NORMAL_OPERATION_BRAKES_OFF;
+                out_somanet_[joint_idx]->TargetTorque = actuator_torque;
+                out_somanet_[joint_idx]->OpMode = PROFILE_TORQUE_MODE;
+                out_somanet_[joint_idx]->TorqueOffset = 0;
+                out_somanet_[joint_idx]->Controlword = NORMAL_OPERATION_BRAKES_OFF;
+              } else {
+                RCLCPP_ERROR(getLogger(), "Should never get here since the other joints are in QUICK_STOP mode");
               }
-              else {
+            } else if (control_level_[joint_idx] == control_level_t::COMPENSATE_FOR_ADDED_LOAD)
+            {
+              // Turn off the inertial actuator brake
+              // Set the inertial actuator to "forward torque" mode, i.e. target torque of 0, i.e. freely moving
+              // Engage the other brakes
+              // Disable the trident brake
+              // Gravity should pull the link down to the hard stop
+              // Increase the spring adjust setpoint until inertial actuator motion occurs
+
+              // Turn off inertial actuator brake
+              // Set the inertial actuator to "forward torque" mode, i.e. target torque of 0, i.e. freely moving
+              if (joint_idx == INERTIAL_ACTUATOR_JOINT_IDX)
+              {
+                out_somanet_[joint_idx]->TargetTorque = 0;
+                out_somanet_[joint_idx]->OpMode = PROFILE_TORQUE_MODE;
+                out_somanet_[joint_idx]->TorqueOffset = 0;
+                out_somanet_[joint_idx]->Controlword = NORMAL_OPERATION_BRAKES_OFF;
+              }
+
+              // Increase the spring adjust setpoint until inertial actuator motion occurs
+              else if (joint_idx == SPRING_ADJUST_JOINT_IDX) {
+                if (in_somanet_[INERTIAL_ACTUATOR_JOINT_IDX]->PositionValue < (INERTIAL_HARD_STOP_POSITION + 0.04 /* rad */))
+                {
+                  allow_mode_change_ = false;
+                  out_somanet_[joint_idx]->TargetTorque = 1000;
+                  out_somanet_[joint_idx]->OpMode = PROFILE_TORQUE_MODE;
+                  out_somanet_[joint_idx]->TorqueOffset = 0;
+                  out_somanet_[joint_idx]->Controlword = NORMAL_OPERATION_BRAKES_OFF;
+                }
+                else {
+                  // The spring is adjusted now, so maintain position.
+                  // Note, this actuator is not backdrivable, and it doesn't have a brake
+                  allow_mode_change_ = true;
+                  out_somanet_[joint_idx]->TargetTorque = 0;
+                  out_somanet_[joint_idx]->OpMode = PROFILE_TORQUE_MODE;
+                  out_somanet_[joint_idx]->TorqueOffset = 0;
+                  out_somanet_[joint_idx]->Controlword = NORMAL_OPERATION_BRAKES_OFF;
+                }
+              } else {
                 RCLCPP_ERROR(getLogger(), "Should never get here since the other joints are in QUICK_STOP mode");
               }
             } else if (control_level_[joint_idx] == control_level_t::UNDEFINED) {
-              out_somanet_1_[joint_idx]->OpMode = PROFILE_TORQUE_MODE;
+              out_somanet_[joint_idx]->OpMode = PROFILE_TORQUE_MODE;
               // small offset to account for friction
-              if (in_somanet_1_[joint_idx]->VelocityValue > 0) {
-                out_somanet_1_[joint_idx]->TorqueOffset = TORQUE_FRICTION_OFFSET;
+              if (in_somanet_[joint_idx]->VelocityValue > 0) {
+                out_somanet_[joint_idx]->TorqueOffset = TORQUE_FRICTION_OFFSET;
               } else {
-                out_somanet_1_[joint_idx]->TorqueOffset = -TORQUE_FRICTION_OFFSET;
+                out_somanet_[joint_idx]->TorqueOffset = -TORQUE_FRICTION_OFFSET;
               }
-              out_somanet_1_[joint_idx]->Controlword = NORMAL_OPERATION_BRAKES_OFF;
+              out_somanet_[joint_idx]->Controlword = NORMAL_OPERATION_BRAKES_OFF;
             }
           } // normal operation
         }
@@ -768,13 +865,13 @@ void SynapticonSystemInterface::somanetCyclicLoop(
         // printf("Processdata cycle %4d , WKC %d ,", i, wkc);
         // printf(" Statusword: %X ,", in_somanet_1->Statusword);
         // printf(" Op Mode Display: %d ,", in_somanet_1->OpModeDisplay);
-        // printf(" ActualPos: %" PRId32 " ,\n", in_somanet_1_[0]->PositionValue);
+        // printf(" ActualPos: %" PRId32 " ,\n", in_somanet_[0]->PositionValue);
         // printf(" DemandPos: %" PRId32 " ,",
-        // in_somanet_1_[0]->PositionDemandInternalValue); printf(" ActualVel:
-        // %" PRId32 " ,", in_somanet_1_[0]->VelocityValue);
-        // printf(" DemandVel: %" PRId32 " ,", in_somanet_1_[0]->VelocityDemandValue);
-        // printf("ActualTorque: %" PRId32 " ,", in_somanet_1_[0]->TorqueValue);
-        // printf(" DemandTorque: %" PRId32 " ,", in_somanet_1_[0]->TorqueDemand);
+        // in_somanet_[0]->PositionDemandInternalValue); printf(" ActualVel:
+        // %" PRId32 " ,", in_somanet_[0]->VelocityValue);
+        // printf(" DemandVel: %" PRId32 " ,", in_somanet_[0]->VelocityDemandValue);
+        // printf("ActualTorque: %" PRId32 " ,", in_somanet_[0]->TorqueValue);
+        // printf(" DemandTorque: %" PRId32 " ,", in_somanet_[0]->TorqueDemand);
         // printf("\n");
 
         // printf(" T:%" PRId64 "\r", ec_DCtime);
@@ -785,12 +882,12 @@ void SynapticonSystemInterface::somanetCyclicLoop(
   }
 
   // Before exiting, set all motors to safe state with brakes on
-  std::lock_guard<std::mutex> lock(in_somanet_mtx_);
+  std::lock_guard<std::mutex> lock(somanet_mtx_);
   for (size_t joint_idx = 0; joint_idx < num_joints_; ++joint_idx) {
-    out_somanet_1_[joint_idx]->OpMode = PROFILE_TORQUE_MODE;
-    out_somanet_1_[joint_idx]->TorqueOffset = 0;
-    out_somanet_1_[joint_idx]->TargetTorque = 0;
-    out_somanet_1_[joint_idx]->Controlword = NORMAL_OPERATION_BRAKES_ON;
+    out_somanet_[joint_idx]->OpMode = PROFILE_TORQUE_MODE;
+    out_somanet_[joint_idx]->TorqueOffset = 0;
+    out_somanet_[joint_idx]->TargetTorque = 0;
+    out_somanet_[joint_idx]->Controlword = NORMAL_OPERATION_BRAKES_ON;
   }
   ec_send_processdata();
   ec_receive_processdata(EC_TIMEOUTRET);
