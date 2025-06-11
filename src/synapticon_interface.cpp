@@ -46,8 +46,7 @@ constexpr double MIN_SPRING_POTENTIOMETER_TICKS = 5000;
 // Maximum spring position: max payload
 constexpr double MAX_SPRING_POTENTIOMETER_TICKS = 34000;
 constexpr double SPRING_POSITION_WITHOUT_PAYLOAD = 5000;
-// TODO: figure out what this value actually is
-constexpr double INERTIAL_HARD_STOP_POSITION = 3.14;
+constexpr double INERTIAL_HARD_STOP_POSITION = -1.082;  // rad
 
 int32_t read_sdo_value(uint16_t slave_idx, uint16_t index, uint8_t subindex) {
     int32_t value_holder;
@@ -811,7 +810,7 @@ void SynapticonSystemInterface::somanetCyclicLoop(
 
               // Increase the spring adjust setpoint until inertial actuator motion occurs
               else if (joint_idx == SPRING_ADJUST_JOINT_IDX) {
-                if (in_somanet_[INERTIAL_ACTUATOR_JOINT_IDX]->PositionValue < (SPRING_POSITION_WITHOUT_PAYLOAD + 100 /* linear encoder ticks */))
+                if (in_somanet_[INERTIAL_ACTUATOR_JOINT_IDX]->PositionValue < (INERTIAL_HARD_STOP_POSITION + 0.04 /* rad */))
                 {
                   allow_mode_change_ = false;
                   out_somanet_[joint_idx]->TargetTorque = 1000;
