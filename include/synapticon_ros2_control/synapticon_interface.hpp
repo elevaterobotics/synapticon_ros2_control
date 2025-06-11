@@ -216,7 +216,7 @@ private:
   std::vector<uint32_t> encoder_resolutions_;
 
   // For coordination between threads
-  volatile std::atomic<int> wkc_;
+  std::atomic<int> wkc_;
   std::atomic<int> expected_wkc_;
   std::atomic<bool> needlf_ = false;
   std::atomic<bool> in_normal_op_mode_ = false;

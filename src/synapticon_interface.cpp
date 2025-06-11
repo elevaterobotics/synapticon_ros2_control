@@ -150,6 +150,8 @@ hardware_interface::CallbackReturn SynapticonSystemInterface::on_init(
     spring_adjust.store(std::numeric_limits<double>::quiet_NaN());
   }
 
+  std::cerr << "Checking interface names" << std::endl;
+
   for (const hardware_interface::ComponentInfo &joint : info_.joints) {
     if (!(joint.command_interfaces[0].name ==
               hardware_interface::HW_IF_POSITION ||
@@ -194,6 +196,8 @@ hardware_interface::CallbackReturn SynapticonSystemInterface::on_init(
     }
   }
 
+  std::cerr << "Done checking interface names, checking mechanical reductions" << std::endl;
+
   for (size_t i = 0; i < num_joints_; ++i)
   {
     std::string reduction_param_name = info_.joints.at(i).name + "_mechanical_reduction";
@@ -204,6 +208,8 @@ hardware_interface::CallbackReturn SynapticonSystemInterface::on_init(
     }
     mechanical_reductions_.at(i) = stod(info_.hardware_parameters[reduction_param_name]);
   }
+
+  std::cerr << "Done checking interface names, setting up ethercat" << std::endl;
 
   // A thread to handle ethercat errors
   osal_thread_create(&ecat_error_thread_, 128000,
@@ -228,6 +234,8 @@ hardware_interface::CallbackReturn SynapticonSystemInterface::on_init(
     return hardware_interface::CallbackReturn::ERROR;
   }
 
+  std::cerr << "Done initializing ethercat, configuring ethercat" << std::endl;
+
   ec_config_map(&io_map_);
   ec_configdc();
   ec_statecheck(0, EC_STATE_SAFE_OP, EC_TIMEOUTSTATE * 4);
@@ -243,6 +251,8 @@ hardware_interface::CallbackReturn SynapticonSystemInterface::on_init(
   ec_writestate(0);
   size_t chk = 200;
 
+  std::cerr << "Done configuring ethercat, waiting for all slaves to reach OP state" << std::endl;
+
   // wait for all slaves to reach OP state
   do {
     ec_send_processdata();
@@ -255,6 +265,8 @@ hardware_interface::CallbackReturn SynapticonSystemInterface::on_init(
                  "An ethercat slave failed to reach OPERATIONAL state");
     return hardware_interface::CallbackReturn::ERROR;
   }
+
+  std::cerr << "Done waiting for all slaves to reach OP state, connecting struct pointers to I/O" << std::endl;
 
   // Connect struct pointers to I/O
   for (size_t joint_idx = 1; joint_idx < (num_joints_ + 1); ++joint_idx) {
@@ -293,11 +305,18 @@ hardware_interface::CallbackReturn SynapticonSystemInterface::on_init(
     }
   }
 
+  std::cerr << "Done reading encoder resolutions, starting the control loop" << std::endl;
+
   // Start the control loop, wait for it to reach normal operation mode
   somanet_control_thread_ =
       std::thread(&SynapticonSystemInterface::somanetCyclicLoop, this,
                   std::ref(in_normal_op_mode_));
 
+  std::cerr << "Done with on_init" << std::endl;
+  std::cerr << "Done with on_init" << std::endl;
+  std::cerr << "Done with on_init" << std::endl;
+  std::cerr << "Done with on_init" << std::endl;
+  std::cerr << "Done with on_init" << std::endl;
   return hardware_interface::CallbackReturn::SUCCESS;
 }
 
