@@ -362,8 +362,8 @@ SynapticonSystemInterface::prepare_command_mode_switch(
           return hardware_interface::return_type::ERROR;
         }
 
-        // compensate_for_added_load puts all joints in QUICK_STOP mode except the spring adjust joint
-        if (i == SPRING_ADJUST_JOINT_IDX) {
+        // compensate_for_added_load puts all joints in QUICK_STOP mode except the spring adjust joint and the inertial actuator joint
+        if ((i == SPRING_ADJUST_JOINT_IDX) || (i == INERTIAL_ACTUATOR_JOINT_IDX)) {
           new_modes.push_back(control_level_t::COMPENSATE_FOR_ADDED_LOAD);
         } else {
           new_modes.push_back(control_level_t::QUICK_STOP);
@@ -819,7 +819,7 @@ void SynapticonSystemInterface::somanetCyclicLoop(
                   out_somanet_[joint_idx]->Controlword = NORMAL_OPERATION_BRAKES_OFF;
                 }
                 else {
-                  // The spring is adjust now, so maintain position.
+                  // The spring is adjusted now, so maintain position.
                   // Note, this actuator is not backdrivable, and it doesn't have a brake
                   allow_mode_change_ = true;
                   out_somanet_[joint_idx]->TargetTorque = 0;
